@@ -13,6 +13,7 @@ use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
 mod backends;
 mod ir;
+mod options;
 
 use backends::Backend;
 
