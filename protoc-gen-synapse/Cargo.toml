@@ -1,0 +1,33 @@
+[package]
+name = "protoc-gen-synapse"
+version = "0.1.0"
+edition = "2024"
+description = "A protoc plugin for generating type-safe ORM code across multiple backends"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/scrogson/synapse"
+keywords = ["protobuf", "codegen", "orm", "seaorm", "ecto"]
+categories = ["development-tools", "database"]
+
+[[bin]]
+name = "protoc-gen-synapse"
+path = "src/main.rs"
+
+[dependencies]
+# Protobuf handling
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = "0.15"
+
+# Code generation
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"
+prettyplease = "0.2"
+
+# Utilities
+heck = "0.5"
+thiserror = "2.0"
+
+[build-dependencies]
+prost-build = "0.13"
+prost-reflect-build = "0.15"

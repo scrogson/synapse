@@ -1,0 +1,169 @@
+// Synapse Storage Layer Options
+//
+// Backend-agnostic annotations for database entities, columns, and relations.
+// These options are parsed by protoc-gen-synapse and used to generate
+// type-safe ORM code for multiple backends (SeaORM, Ecto, GORM, etc.)
+
+syntax = "proto3";
+
+package synapse.storage;
+
+import "google/protobuf/descriptor.proto";
+
+// =============================================================================
+// Entity Options (message-level)
+// =============================================================================
+
+message EntityOptions {
+  // Database table name (defaults to snake_case of message name)
+  string table_name = 1;
+
+  // Skip code generation for this message
+  bool skip = 2;
+
+  // Relation definitions at the message level
+  repeated RelationDef relations = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  EntityOptions entity = 50001;
+}
+
+// =============================================================================
+// Column Options (field-level)
+// =============================================================================
+
+message ColumnOptions {
+  // Mark this field as the primary key
+  bool primary_key = 1;
+
+  // Enable auto-increment (defaults true for primary keys in most backends)
+  bool auto_increment = 2;
+
+  // Add a unique constraint
+  bool unique = 3;
+
+  // Override the database column name (defaults to snake_case of field name)
+  string column_name = 4;
+
+  // Default value expression (backend-specific syntax)
+  string default_value = 5;
+
+  // Embed this field as JSON (for nested messages)
+  bool embed = 6;
+
+  // Backend-specific type hints
+  // Keys: "seaorm", "ecto", "gorm", etc.
+  // Values: Backend-specific type strings
+  map<string, string> type_hints = 10;
+}
+
+extend google.protobuf.FieldOptions {
+  ColumnOptions column = 50002;
+}
+
+// =============================================================================
+// Relation Options (field-level)
+// =============================================================================
+
+enum RelationType {
+  RELATION_TYPE_UNSPECIFIED = 0;
+  BELONGS_TO = 1;
+  HAS_ONE = 2;
+  HAS_MANY = 3;
+  MANY_TO_MANY = 4;
+}
+
+message RelationDef {
+  // Name of the relation (for code generation)
+  string name = 1;
+
+  // Type of relation
+  RelationType type = 2;
+
+  // Related entity/schema name
+  string related = 3;
+
+  // Foreign key column name
+  string foreign_key = 4;
+
+  // Referenced column name (defaults to "id")
+  string references = 5;
+
+  // Through table for many-to-many relations
+  string through = 6;
+}
+
+message RelationOptions {
+  // Type of relation
+  RelationType type = 1;
+
+  // Related entity/schema name (inferred from field type if not specified)
+  string related = 2;
+
+  // Foreign key column name
+  string foreign_key = 3;
+
+  // Referenced column name (defaults to "id")
+  string references = 4;
+
+  // Through table for many-to-many relations
+  string through = 5;
+}
+
+extend google.protobuf.FieldOptions {
+  RelationOptions relation = 50003;
+}
+
+// =============================================================================
+// Enum Options
+// =============================================================================
+
+enum EnumDbType {
+  ENUM_DB_TYPE_UNSPECIFIED = 0;
+  ENUM_DB_TYPE_STRING = 1;   // Store as string
+  ENUM_DB_TYPE_INTEGER = 2;  // Store as integer
+}
+
+message EnumOptions {
+  // How to store in database
+  EnumDbType db_type = 1;
+
+  // Skip code generation for this enum
+  bool skip = 2;
+}
+
+extend google.protobuf.EnumOptions {
+  EnumOptions enum_storage = 50004;
+}
+
+message EnumValueOptions {
+  // Override the string value stored in database
+  string string_value = 1;
+
+  // Override the integer value stored in database
+  int32 int_value = 2;
+}
+
+extend google.protobuf.EnumValueOptions {
+  EnumValueOptions enum_value_storage = 50005;
+}
+
+// =============================================================================
+// Service Options (for storage trait generation)
+// =============================================================================
+
+message ServiceOptions {
+  // Generate a storage trait for this service
+  bool generate_storage = 1;
+
+  // Custom trait name (defaults to "{ServiceName}Storage")
+  string trait_name = 2;
+
+  // Skip this service
+  bool skip = 3;
+}
+
+extend google.protobuf.ServiceOptions {
+  ServiceOptions service_storage = 50006;
+}

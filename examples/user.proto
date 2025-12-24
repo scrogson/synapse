@@ -1,0 +1,83 @@
+// Example: User entity with Synapse storage annotations
+//
+// This demonstrates the synapse.storage options for defining
+// database entities, columns, and relations.
+
+syntax = "proto3";
+
+package example;
+
+import "synapse/storage/options.proto";
+import "google/protobuf/timestamp.proto";
+
+// User entity
+message User {
+  option (synapse.storage.entity) = {
+    table_name: "users"
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+  }];
+
+  string email = 2 [(synapse.storage.column) = {
+    unique: true
+  }];
+
+  string name = 3;
+
+  optional string bio = 4;  // Nullable in database
+
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+
+  // Relation: User has many Posts
+  repeated Post posts = 7 [(synapse.storage.relation) = {
+    type: HAS_MANY
+    foreign_key: "author_id"
+  }];
+}
+
+// Post entity
+message Post {
+  option (synapse.storage.entity) = {
+    table_name: "posts"
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+  }];
+
+  string title = 2;
+  string content = 3;
+
+  int64 author_id = 4;
+
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+
+  // Relation: Post belongs to User
+  User author = 7 [(synapse.storage.relation) = {
+    type: BELONGS_TO
+    foreign_key: "author_id"
+    references: "id"
+  }];
+}
+
+// Status enum stored as string
+enum UserStatus {
+  option (synapse.storage.enum_storage) = {
+    db_type: ENUM_DB_TYPE_STRING
+  };
+
+  USER_STATUS_UNSPECIFIED = 0;
+  USER_STATUS_ACTIVE = 1 [(synapse.storage.enum_value_storage) = {
+    string_value: "active"
+  }];
+  USER_STATUS_INACTIVE = 2 [(synapse.storage.enum_value_storage) = {
+    string_value: "inactive"
+  }];
+  USER_STATUS_BANNED = 3 [(synapse.storage.enum_value_storage) = {
+    string_value: "banned"
+  }];
+}
