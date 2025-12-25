@@ -42,11 +42,26 @@ async fn graphql_handler(
     schema.execute(req.into_inner()).await.into()
 }
 
-/// GraphQL Playground handler
-async fn graphql_playground() -> impl axum::response::IntoResponse {
-    axum::response::Html(async_graphql::http::playground_source(
-        async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"),
-    ))
+/// Apollo Sandbox handler (embedded)
+async fn apollo_sandbox() -> impl axum::response::IntoResponse {
+    axum::response::Html(r#"<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Apollo Sandbox</title>
+    <style>body { margin: 0; overflow: hidden; }</style>
+</head>
+<body>
+    <div id="sandbox" style="width: 100vw; height: 100vh;"></div>
+    <script src="https://embeddable-sandbox.cdn.apollographql.com/_latest/embeddable-sandbox.umd.production.min.js"></script>
+    <script>
+        new window.EmbeddedSandbox({
+            target: '#sandbox',
+            initialEndpoint: window.location.origin + '/graphql',
+        });
+    </script>
+</body>
+</html>"#)
 }
 
 #[tokio::main]
@@ -97,12 +112,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("gRPC server listening on {}", grpc_addr);
     tracing::info!("GraphQL server listening on {}", graphql_addr);
-    tracing::info!("GraphQL Playground available at http://{}/", graphql_addr);
+    tracing::info!("Apollo Sandbox available at http://{}/", graphql_addr);
 
     // Build axum router for GraphQL
     let app = Router::new()
-        .route("/graphql", get(graphql_playground).post(graphql_handler))
-        .route("/", get(graphql_playground))
+        .route("/graphql", get(apollo_sandbox).post(graphql_handler))
+        .route("/", get(apollo_sandbox))
         .with_state(schema);
 
     // Spawn gRPC server
