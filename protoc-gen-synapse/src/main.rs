@@ -14,7 +14,6 @@ use std::io::{self, Read, Write};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
-mod backends;
 mod error;
 mod grpc;
 pub mod options;
@@ -39,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = match backend_name.as_str() {
         "seaorm" => {
             // Use the SeaORM backend's generate_from_bytes which handles extension caching
-            backends::seaorm::generator::generate_from_bytes(&input)?
+            storage::seaorm::generator::generate_from_bytes(&input)?
         }
         _ => {
             // Unknown backend

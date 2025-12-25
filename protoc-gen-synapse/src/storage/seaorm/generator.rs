@@ -5,7 +5,7 @@
 
 use super::{entity, enum_gen, options};
 use crate::error::GeneratorError;
-use crate::{grpc, storage};
+use crate::grpc;
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -42,7 +42,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         // Process each service in the file
         for svc in &file_descriptor.service {
             // Storage trait generation
-            if let Some(generated) = storage::generate(file_descriptor, svc)? {
+            if let Some(generated) = crate::storage::generate(file_descriptor, svc)? {
                 files.push(generated);
             }
             // gRPC service generation

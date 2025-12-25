@@ -5,7 +5,7 @@
 //! and handle request validation and error conversion.
 
 use super::errors::generate_error_types;
-use crate::backends::seaorm::options::{
+use crate::storage::seaorm::options::{
     get_cached_grpc_method_options, get_cached_grpc_service_options,
 };
 use crate::error::GeneratorError;
