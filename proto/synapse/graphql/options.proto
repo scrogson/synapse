@@ -20,6 +20,10 @@ message MessageOptions {
 
   // Generate as GraphQL input type instead of output type
   bool input_type = 3;
+
+  // Implement Relay Node interface (requires id field)
+  // When true, the type will have a global ID field and be fetchable via node(id:)
+  bool node = 4;
 }
 
 // Deprecation info for GraphQL schema elements
@@ -44,9 +48,6 @@ message FieldOptions {
 message ServiceOptions {
   // Skip generation for this service (generates by default)
   bool skip = 1;
-
-  // GraphQL operation type: Query, Mutation, or Subscription
-  string operation = 2;
 }
 
 // Method-level GraphQL generation options
@@ -59,6 +60,21 @@ message MethodOptions {
 
   // Description for the GraphQL field
   string description = 3;
+
+  // Operation type for this method: Query, Mutation, or Subscription
+  // Defaults to "Query" if not specified
+  string operation = 4;
+
+  // GraphQL input type (unwrap from request wrapper)
+  // e.g., "CreateUserInput" instead of "CreateUserRequest"
+  string input_type = 5;
+
+  // GraphQL output type (unwrap from response wrapper)
+  // e.g., "User" instead of "CreateUserResponse"
+  string output_type = 6;
+
+  // Field path to extract from response (e.g., "user" to get response.user)
+  string output_field = 7;
 }
 
 extend google.protobuf.MessageOptions {

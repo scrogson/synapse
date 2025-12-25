@@ -10,7 +10,7 @@
 //! protobuf bytes.
 
 pub use crate::options::synapse::storage;
-pub use crate::options::synapse::{grpc, validate};
+pub use crate::options::synapse::{graphql, grpc, validate};
 use once_cell::sync::Lazy;
 use prost_reflect::{DescriptorPool, DynamicMessage, Value};
 use prost_types::{
@@ -40,6 +40,12 @@ const GRPC_RESPONSE_EXTENSION_NAME: &str = "synapse.grpc.response";
 // Validate extension names
 const VALIDATE_MESSAGE_EXTENSION_NAME: &str = "synapse.validate.message";
 const VALIDATE_FIELD_EXTENSION_NAME: &str = "synapse.validate.field";
+
+// GraphQL extension names
+const GRAPHQL_MESSAGE_EXTENSION_NAME: &str = "synapse.graphql.message";
+const GRAPHQL_FIELD_EXTENSION_NAME: &str = "synapse.graphql.field";
+const GRAPHQL_SERVICE_EXTENSION_NAME: &str = "synapse.graphql.service";
+const GRAPHQL_METHOD_EXTENSION_NAME: &str = "synapse.graphql.method";
 
 /// Lazily initialized descriptor pool with our extension definitions
 static DESCRIPTOR_POOL: Lazy<DescriptorPool> = Lazy::new(|| {
@@ -75,6 +81,14 @@ struct OptionsCache {
     validate_message_options: HashMap<(String, String), validate::MessageOptions>,
     /// Validate field options: (file_name, message_name, field_number) -> validate::FieldOptions
     validate_field_options: HashMap<(String, String, i32), validate::FieldOptions>,
+    /// GraphQL message options: (file_name, message_name) -> graphql::MessageOptions
+    graphql_message_options: HashMap<(String, String), graphql::MessageOptions>,
+    /// GraphQL field options: (file_name, message_name, field_number) -> graphql::FieldOptions
+    graphql_field_options: HashMap<(String, String, i32), graphql::FieldOptions>,
+    /// GraphQL service options: (file_name, service_name) -> graphql::ServiceOptions
+    graphql_service_options: HashMap<(String, String), graphql::ServiceOptions>,
+    /// GraphQL method options: (file_name, service_name, method_name) -> graphql::MethodOptions
+    graphql_method_options: HashMap<(String, String, String), graphql::MethodOptions>,
 }
 
 /// Pre-process raw CodeGeneratorRequest bytes to extract options using prost-reflect
@@ -216,6 +230,21 @@ fn extract_message_options(
                     }
                 }
             }
+
+            // Extract GraphQL message options (synapse.graphql.message)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_MESSAGE_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(graphql_opts) = convert_to_graphql_message_options(&ext_value) {
+                        cache.graphql_message_options.insert(
+                            (file_name.to_string(), full_name.clone()),
+                            graphql_opts,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -266,6 +295,27 @@ fn extract_message_options(
                                         convert_to_validate_field_options(&ext_value)
                                     {
                                         cache.validate_field_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                full_name.clone(),
+                                                field_number,
+                                            ),
+                                            field_opts,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract synapse.graphql.field options
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_FIELD_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(field_opts) =
+                                        convert_to_graphql_field_options(&ext_value)
+                                    {
+                                        cache.graphql_field_options.insert(
                                             (
                                                 file_name.to_string(),
                                                 full_name.clone(),
@@ -437,6 +487,21 @@ fn extract_service_options(
                     }
                 }
             }
+
+            // Extract GraphQL service options (synapse.graphql.service)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_SERVICE_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(graphql_opts) = convert_to_graphql_service_options(&ext_value) {
+                        cache.graphql_service_options.insert(
+                            (file_name.to_string(), service_name.clone()),
+                            graphql_opts,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -489,6 +554,27 @@ fn extract_service_options(
                                                 method_name.clone(),
                                             ),
                                             grpc_method_opts,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract GraphQL method options (synapse.graphql.method)
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_METHOD_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(graphql_method_opts) =
+                                        convert_to_graphql_method_options(&ext_value)
+                                    {
+                                        cache.graphql_method_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                service_name.clone(),
+                                                method_name.clone(),
+                                            ),
+                                            graphql_method_opts,
                                         );
                                     }
                                 }
@@ -667,6 +753,68 @@ pub fn get_cached_validate_field_options(
         cache
             .validate_field_options
             .get(&(file_name.to_string(), msg_name.to_string(), field_number))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL message options for a given file and message name
+#[allow(dead_code)]
+pub fn get_cached_graphql_message_options(
+    file_name: &str,
+    msg_name: &str,
+) -> Option<graphql::MessageOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_message_options
+            .get(&(file_name.to_string(), msg_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL field options for a given file, message name, and field number
+#[allow(dead_code)]
+pub fn get_cached_graphql_field_options(
+    file_name: &str,
+    msg_name: &str,
+    field_number: i32,
+) -> Option<graphql::FieldOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_field_options
+            .get(&(file_name.to_string(), msg_name.to_string(), field_number))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL service options for a given file and service name
+#[allow(dead_code)]
+pub fn get_cached_graphql_service_options(
+    file_name: &str,
+    service_name: &str,
+) -> Option<graphql::ServiceOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_service_options
+            .get(&(file_name.to_string(), service_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL method options for a given file, service, and method name
+#[allow(dead_code)]
+pub fn get_cached_graphql_method_options(
+    file_name: &str,
+    service_name: &str,
+    method_name: &str,
+) -> Option<graphql::MethodOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_method_options
+            .get(&(
+                file_name.to_string(),
+                service_name.to_string(),
+                method_name.to_string(),
+            ))
             .cloned()
     })
 }
@@ -910,6 +1058,12 @@ fn convert_to_service_options(value: &Value) -> Option<storage::ServiceOptions> 
         }
     }
 
+    if let Some(cow) = msg.get_field_by_name("generate_implementation") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.generate_implementation = *b;
+        }
+    }
+
     Some(result)
 }
 
@@ -927,6 +1081,18 @@ fn convert_to_method_options(value: &Value) -> Option<storage::MethodOptions> {
     if let Some(cow) = msg.get_field_by_name("method_name") {
         if let Value::String(s) = cow.as_ref() {
             result.method_name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("entity_name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.entity_name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("operation") {
+        if let Value::String(s) = cow.as_ref() {
+            result.operation = s.clone();
         }
     }
 
@@ -993,6 +1159,134 @@ fn convert_to_grpc_response_options(value: &Value) -> Option<grpc::ResponseOptio
     if let Some(cow) = msg.get_field_by_name("rich_errors") {
         if let Value::Bool(b) = cow.as_ref() {
             result.rich_errors = *b;
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::MessageOptions
+fn convert_to_graphql_message_options(value: &Value) -> Option<graphql::MessageOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::MessageOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("type_name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.type_name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("input_type") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.input_type = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("node") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.node = *b;
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::FieldOptions
+fn convert_to_graphql_field_options(value: &Value) -> Option<graphql::FieldOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::FieldOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("deprecated") {
+        if let Some(dep_msg) = cow.as_ref().as_message() {
+            if let Some(reason_cow) = dep_msg.get_field_by_name("reason") {
+                if let Value::String(s) = reason_cow.as_ref() {
+                    result.deprecated = Some(graphql::Deprecated {
+                        reason: s.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::ServiceOptions
+fn convert_to_graphql_service_options(value: &Value) -> Option<graphql::ServiceOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::ServiceOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::MethodOptions
+fn convert_to_graphql_method_options(value: &Value) -> Option<graphql::MethodOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::MethodOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("description") {
+        if let Value::String(s) = cow.as_ref() {
+            result.description = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("operation") {
+        if let Value::String(s) = cow.as_ref() {
+            result.operation = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("input_type") {
+        if let Value::String(s) = cow.as_ref() {
+            result.input_type = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("output_type") {
+        if let Value::String(s) = cow.as_ref() {
+            result.output_type = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("output_field") {
+        if let Value::String(s) = cow.as_ref() {
+            result.output_field = s.clone();
         }
     }
 

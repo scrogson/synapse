@@ -3,6 +3,10 @@
 //! This module generates HasOne, HasMany, and BelongsTo relations for SeaORM 2.0.
 //!
 //! SeaORM 2.0 uses the dense format with relation fields as struct fields.
+//!
+//! NOTE: Currently disabled - SeaORM 1.x uses a different Relation enum approach.
+
+#![allow(dead_code)]
 
 use super::options::storage::{RelationDef, RelationType};
 use heck::{ToSnakeCase, ToUpperCamelCase};

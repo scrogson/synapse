@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package test.graphql.uuid;
+
+import "synapse/graphql/options.proto";
+import "synapse/storage/options.proto";
+
+// Organization entity with UUID-based ID
+message Organization {
+  option (synapse.graphql.message) = {
+    node: true  // Implements Relay Node interface
+  };
+  option (synapse.storage.entity) = {
+    table_name: "organizations"
+  };
+
+  // UUID primary key
+  string id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    column_name: "uuid"
+  }];
+
+  string name = 2;
+  optional string description = 3;
+}
+
+// Team entity with UUID-based ID
+message Team {
+  option (synapse.graphql.message) = {
+    node: true
+  };
+  option (synapse.storage.entity) = {
+    table_name: "teams"
+    relations: [
+      {
+        name: "organization"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "Organization"
+        foreign_key: "organization_id"
+        references: "id"
+      }
+    ]
+  };
+
+  // UUID primary key
+  string id = 1 [(synapse.storage.column) = {
+    primary_key: true
+  }];
+
+  string name = 2;
+
+  // Foreign key to organization (UUID)
+  string organization_id = 3 [(synapse.graphql.field).skip = true];
+}

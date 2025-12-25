@@ -162,6 +162,25 @@ extend google.protobuf.EnumValueOptions {
 }
 
 // =============================================================================
+// Connection Options (for Relay-style pagination)
+// =============================================================================
+
+message ConnectionOptions {
+  // Mark this message as a Relay Connection type
+  bool connection = 1;
+
+  // The node type this connection contains (e.g., "User" for UserConnection)
+  string node_type = 2;
+
+  // Mark this message as a Relay Edge type
+  bool edge = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  ConnectionOptions connection_type = 50008;
+}
+
+// =============================================================================
 // Service Options (for storage trait generation)
 // =============================================================================
 
@@ -174,6 +193,9 @@ message ServiceOptions {
 
   // Skip this service
   bool skip = 3;
+
+  // Generate a SeaORM-based implementation of the storage trait
+  bool generate_implementation = 4;
 }
 
 extend google.protobuf.ServiceOptions {
@@ -187,6 +209,14 @@ message MethodOptions {
 
   // Custom Rust method name (defaults to snake_case of RPC name)
   string method_name = 2;
+
+  // Entity name this method operates on (inferred from method name if not specified)
+  // e.g., "User" for GetUser, ListUsers, CreateUser, etc.
+  string entity_name = 3;
+
+  // Operation type: "get", "list", "create", "update", "delete"
+  // (inferred from method name prefix if not specified)
+  string operation = 4;
 }
 
 extend google.protobuf.MethodOptions {

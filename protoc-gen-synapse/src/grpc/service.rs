@@ -64,6 +64,10 @@ pub fn generate(
     let struct_ident = format_ident!("{}", struct_name);
     let storage_trait_ident = format_ident!("{}", storage_trait);
 
+    // Build the storage trait module name (snake_case of trait name)
+    let storage_trait_module = format!("{}_storage", service_name.to_snake_case());
+    let storage_trait_module_ident = format_ident!("{}", storage_trait_module);
+
     // Build the tonic service trait name (from proto service name)
     // e.g., UserService -> user_service_server::UserService
     let service_module = format!("{}_server", service_name.to_snake_case());
@@ -90,16 +94,17 @@ pub fn generate(
         #![allow(unused_imports)]
 
         use super::prelude::*;
+        use super::#storage_trait_module_ident::{#storage_trait_ident, StorageError};
         use tonic::{Request, Response, Status};
 
         #error_types
 
         #[doc = #struct_doc]
-        pub struct #struct_ident<S: #storage_trait_ident> {
+        pub struct #struct_ident<S: #storage_trait_ident + 'static> {
             storage: S,
         }
 
-        impl<S: #storage_trait_ident> #struct_ident<S> {
+        impl<S: #storage_trait_ident + 'static> #struct_ident<S> {
             /// Create a new gRPC service with the given storage implementation
             pub fn new(storage: S) -> Self {
                 Self { storage }
@@ -122,7 +127,7 @@ pub fn generate(
         }
 
         #[tonic::async_trait]
-        impl<S: #storage_trait_ident> #service_module_ident::#service_trait_ident for #struct_ident<S> {
+        impl<S: #storage_trait_ident + 'static> #service_module_ident::#service_trait_ident for #struct_ident<S> {
             #(#methods)*
         }
     };

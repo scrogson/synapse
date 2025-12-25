@@ -3,9 +3,9 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, enum_gen, options};
+use super::{entity, enum_gen, implementation, options};
 use crate::error::GeneratorError;
-use crate::{grpc, validate};
+use crate::{graphql, grpc, validate};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -34,6 +34,19 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             if let Some(generated) = validate::generate(file_descriptor, message)? {
                 files.push(generated);
             }
+            // Generate GraphQL Object type if has graphql options
+            if let Some(generated) = graphql::generate_message(file_descriptor, message)? {
+                files.push(generated);
+            }
+            // Generate DataLoaders for relations
+            for generated in graphql::generate_dataloaders(file_descriptor, message)? {
+                files.push(generated);
+            }
+        }
+
+        // Generate Node interface if there are node types in this file
+        if let Some(generated) = graphql::generate_node_interface(file_descriptor)? {
+            files.push(generated);
         }
 
         // Process each enum in the file
@@ -49,8 +62,16 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             if let Some(generated) = crate::storage::generate(file_descriptor, svc)? {
                 files.push(generated);
             }
+            // Storage implementation generation (SeaORM-based)
+            if let Some(generated) = implementation::generate(file_descriptor, svc)? {
+                files.push(generated);
+            }
             // gRPC service generation
             if let Some(generated) = grpc::generate(file_descriptor, svc)? {
+                files.push(generated);
+            }
+            // GraphQL resolver generation (Query/Mutation structs)
+            for generated in graphql::generate_service(file_descriptor, svc)? {
                 files.push(generated);
             }
         }

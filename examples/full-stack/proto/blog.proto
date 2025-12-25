@@ -1,0 +1,373 @@
+syntax = "proto3";
+
+package blog;
+
+import "google/protobuf/timestamp.proto";
+import "synapse/graphql/options.proto";
+import "synapse/grpc/options.proto";
+import "synapse/storage/options.proto";
+
+// =============================================================================
+// Relay Pagination Types (inline for now)
+// =============================================================================
+
+message PageInfo {
+  bool has_next_page = 1;
+  bool has_previous_page = 2;
+  optional string start_cursor = 3;
+  optional string end_cursor = 4;
+}
+
+// =============================================================================
+// Entities
+// =============================================================================
+
+// User entity
+message User {
+  option (synapse.graphql.message) = { node: true };
+  option (synapse.storage.entity) = {
+    table_name: "users"
+    relations: [
+      {
+        name: "posts"
+        type: RELATION_TYPE_HAS_MANY
+        related: "Post"
+        foreign_key: "author_id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  string email = 2 [(synapse.storage.column) = { unique: true }];
+  string name = 3;
+  optional string bio = 4;
+
+  google.protobuf.Timestamp created_at = 5 [(synapse.storage.column) = {
+    default_expr: "Expr::current_timestamp()"
+  }];
+
+  google.protobuf.Timestamp updated_at = 6 [(synapse.storage.column) = {
+    default_expr: "Expr::current_timestamp()"
+  }];
+}
+
+// Post entity
+message Post {
+  option (synapse.graphql.message) = { node: true };
+  option (synapse.storage.entity) = {
+    table_name: "posts"
+    relations: [
+      {
+        name: "author"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "User"
+        foreign_key: "author_id"
+        references: "id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  string title = 2;
+  string content = 3;
+  bool published = 4;
+
+  int64 author_id = 5 [(synapse.graphql.field).skip = true];
+
+  google.protobuf.Timestamp created_at = 6 [(synapse.storage.column) = {
+    default_expr: "Expr::current_timestamp()"
+  }];
+
+  google.protobuf.Timestamp updated_at = 7 [(synapse.storage.column) = {
+    default_expr: "Expr::current_timestamp()"
+  }];
+}
+
+// =============================================================================
+// Input Types
+// =============================================================================
+
+message CreateUserInput {
+  option (synapse.graphql.message) = { input_type: true };
+
+  string email = 1;
+  string name = 2;
+  optional string bio = 3;
+}
+
+message UpdateUserInput {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional string email = 1;
+  optional string name = 2;
+  optional string bio = 3;
+}
+
+message CreatePostInput {
+  option (synapse.graphql.message) = { input_type: true };
+
+  string title = 1;
+  string content = 2;
+  bool published = 3;
+  int64 author_id = 4;
+}
+
+message UpdatePostInput {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional string title = 1;
+  optional string content = 2;
+  optional bool published = 3;
+}
+
+// =============================================================================
+// Connections (Relay)
+// =============================================================================
+
+message UserEdge {
+  option (synapse.storage.connection_type) = { edge: true };
+
+  string cursor = 1;
+  User node = 2;
+}
+
+message UserConnection {
+  option (synapse.storage.connection_type) = {
+    connection: true
+    node_type: "User"
+  };
+
+  repeated UserEdge edges = 1;
+  PageInfo page_info = 2;
+}
+
+message PostEdge {
+  option (synapse.storage.connection_type) = { edge: true };
+
+  string cursor = 1;
+  Post node = 2;
+}
+
+message PostConnection {
+  option (synapse.storage.connection_type) = {
+    connection: true
+    node_type: "Post"
+  };
+
+  repeated PostEdge edges = 1;
+  PageInfo page_info = 2;
+}
+
+// =============================================================================
+// Request/Response Messages
+// =============================================================================
+
+// User CRUD
+message GetUserRequest {
+  int64 id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  optional string after = 1;
+  optional string before = 2;
+  optional int32 first = 3;
+  optional int32 last = 4;
+}
+
+message CreateUserRequest {
+  CreateUserInput input = 1;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+message UpdateUserRequest {
+  int64 id = 1;
+  UpdateUserInput input = 2;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
+message DeleteUserRequest {
+  int64 id = 1;
+}
+
+message DeleteUserResponse {
+  bool success = 1;
+}
+
+// Post CRUD
+message GetPostRequest {
+  int64 id = 1;
+}
+
+message GetPostResponse {
+  Post post = 1;
+}
+
+message ListPostsRequest {
+  optional string after = 1;
+  optional string before = 2;
+  optional int32 first = 3;
+  optional int32 last = 4;
+}
+
+message CreatePostRequest {
+  CreatePostInput input = 1;
+}
+
+message CreatePostResponse {
+  Post post = 1;
+}
+
+message UpdatePostRequest {
+  int64 id = 1;
+  UpdatePostInput input = 2;
+}
+
+message UpdatePostResponse {
+  Post post = 1;
+}
+
+message DeletePostRequest {
+  int64 id = 1;
+}
+
+message DeletePostResponse {
+  bool success = 1;
+}
+
+// =============================================================================
+// Services
+// =============================================================================
+
+service UserService {
+  option (synapse.graphql.service) = {};
+  option (synapse.grpc.service) = {};
+  option (synapse.storage.service) = {
+    generate_storage: true
+    generate_implementation: true
+  };
+
+  // Queries
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "user"
+      description: "Get a user by ID"
+      operation: "Query"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc ListUsers(ListUsersRequest) returns (UserConnection) {
+    option (synapse.graphql.method) = {
+      name: "users"
+      description: "List users with pagination"
+      operation: "Query"
+    };
+  }
+
+  // Mutations
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "createUser"
+      description: "Create a new user"
+      operation: "Mutation"
+      input_type: "CreateUserInput"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "updateUser"
+      description: "Update an existing user"
+      operation: "Mutation"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "deleteUser"
+      description: "Delete a user"
+      operation: "Mutation"
+    };
+  }
+}
+
+service PostService {
+  option (synapse.graphql.service) = {};
+  option (synapse.grpc.service) = {};
+  option (synapse.storage.service) = {
+    generate_storage: true
+    generate_implementation: true
+  };
+
+  // Queries
+  rpc GetPost(GetPostRequest) returns (GetPostResponse) {
+    option (synapse.graphql.method) = {
+      name: "post"
+      description: "Get a post by ID"
+      operation: "Query"
+      output_type: "Post"
+      output_field: "post"
+    };
+  }
+
+  rpc ListPosts(ListPostsRequest) returns (PostConnection) {
+    option (synapse.graphql.method) = {
+      name: "posts"
+      description: "List posts with pagination"
+      operation: "Query"
+    };
+  }
+
+  // Mutations
+  rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {
+    option (synapse.graphql.method) = {
+      name: "createPost"
+      description: "Create a new post"
+      operation: "Mutation"
+      input_type: "CreatePostInput"
+      output_type: "Post"
+      output_field: "post"
+    };
+  }
+
+  rpc UpdatePost(UpdatePostRequest) returns (UpdatePostResponse) {
+    option (synapse.graphql.method) = {
+      name: "updatePost"
+      description: "Update an existing post"
+      operation: "Mutation"
+      output_type: "Post"
+      output_field: "post"
+    };
+  }
+
+  rpc DeletePost(DeletePostRequest) returns (DeletePostResponse) {
+    option (synapse.graphql.method) = {
+      name: "deletePost"
+      description: "Delete a post"
+      operation: "Mutation"
+    };
+  }
+}

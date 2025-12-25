@@ -1,0 +1,195 @@
+syntax = "proto3";
+
+package test.graphql;
+
+import "synapse/graphql/options.proto";
+import "synapse/relay/types.proto";
+import "synapse/storage/options.proto";
+
+// User entity with GraphQL Object type generation
+message User {
+  option (synapse.graphql.message) = {
+    node: true  // Implements Relay Node interface
+  };
+  option (synapse.storage.entity) = {
+    table_name: "users"
+    relations: [
+      {
+        name: "posts"
+        type: RELATION_TYPE_HAS_MANY
+        related: "Post"
+        foreign_key: "author_id"
+      }
+    ]
+  };
+
+  // Primary key - becomes global ID when node: true
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  // Email
+  string email = 2;
+
+  // Optional bio field
+  optional string bio = 3;
+
+  // Internal field - skip from GraphQL
+  int64 internal_score = 4 [(synapse.graphql.field).skip = true];
+}
+
+// Post entity with GraphQL Object type generation
+message Post {
+  option (synapse.graphql.message) = {
+    node: true  // Implements Relay Node interface
+  };
+  option (synapse.storage.entity) = {
+    table_name: "posts"
+    relations: [
+      {
+        name: "author"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "User"
+        foreign_key: "author_id"
+        references: "id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  string title = 2;
+  string content = 3;
+
+  // Foreign key - skip from GraphQL (use relation resolver instead)
+  int64 author_id = 4 [(synapse.graphql.field).skip = true];
+}
+
+// GraphQL Input type for creating users
+message CreateUserInput {
+  option (synapse.graphql.message) = { input_type: true };
+
+  string email = 1;
+  optional string bio = 2;
+}
+
+// Request/Response messages for RPC methods
+message GetUserRequest {
+  int64 id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+// Filter input for User queries
+message UserFilter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  synapse.relay.IntFilter id = 1;
+  synapse.relay.StringFilter email = 2;
+  synapse.relay.StringFilter bio = 3;
+
+  // Logical operators for complex filters
+  repeated UserFilter and = 10;
+  repeated UserFilter or = 11;
+  optional UserFilter not = 12;
+}
+
+// OrderBy input for User queries
+message UserOrderBy {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection email = 2;
+  optional synapse.relay.OrderDirection created_at = 3;
+}
+
+// Request for listing users with Relay pagination
+message ListUsersRequest {
+  // Return edges after this cursor (forward pagination)
+  optional string after = 1;
+
+  // Return edges before this cursor (backward pagination)
+  optional string before = 2;
+
+  // Return the first N edges (forward pagination)
+  optional int32 first = 3;
+
+  // Return the last N edges (backward pagination)
+  optional int32 last = 4;
+
+  // Filter results
+  optional UserFilter filter = 5;
+
+  // Order results
+  repeated UserOrderBy order_by = 6;
+}
+
+// Relay Connection type for User
+message UserConnection {
+  option (synapse.storage.connection_type) = {
+    connection: true
+    node_type: "User"
+  };
+
+  repeated UserEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
+
+// Relay Edge type for User
+message UserEdge {
+  option (synapse.storage.connection_type) = {
+    edge: true
+  };
+
+  string cursor = 1;
+  User node = 2;
+}
+
+message CreateUserRequest {
+  CreateUserInput input = 1;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+// UserService with per-method GraphQL operations
+service UserService {
+  option (synapse.graphql.service) = {};
+
+  // Query: get single user
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "user"
+      description: "Get a user by ID"
+      operation: "Query"
+    };
+  };
+
+  // Query: list users with Relay connection
+  rpc ListUsers(ListUsersRequest) returns (UserConnection) {
+    option (synapse.graphql.method) = {
+      name: "users"
+      description: "List all users with pagination"
+      operation: "Query"
+    };
+  };
+
+  // Mutation: create user
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "createUser"
+      description: "Create a new user"
+      operation: "Mutation"
+      input_type: "CreateUserInput"
+      output_type: "User"
+      output_field: "user"
+    };
+  };
+}

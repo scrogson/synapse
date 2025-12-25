@@ -1,0 +1,128 @@
+// Synapse Relay connection types
+//
+// Shared types for Relay-style cursor pagination across all layers:
+// - Storage: cursor-based queries
+// - gRPC: pagination request/response patterns
+// - GraphQL: Relay connection spec compliance
+
+syntax = "proto3";
+
+package synapse.relay;
+
+// =============================================================================
+// Pagination Types
+// =============================================================================
+
+// PageInfo contains pagination metadata for connections
+// Follows the Relay Connection spec: https://relay.dev/graphql/connections.htm
+message PageInfo {
+  // When paginating forwards, are there more items?
+  bool has_next_page = 1;
+
+  // When paginating backwards, are there more items?
+  bool has_previous_page = 2;
+
+  // Cursor of the first edge in the result set
+  optional string start_cursor = 3;
+
+  // Cursor of the last edge in the result set
+  optional string end_cursor = 4;
+}
+
+// ConnectionRequest contains standard pagination arguments
+// Use this as a base for list/connection RPC requests
+message ConnectionRequest {
+  // Return edges after this cursor (forward pagination)
+  optional string after = 1;
+
+  // Return edges before this cursor (backward pagination)
+  optional string before = 2;
+
+  // Return the first N edges (forward pagination)
+  optional int32 first = 3;
+
+  // Return the last N edges (backward pagination)
+  optional int32 last = 4;
+}
+
+// =============================================================================
+// OrderBy Types
+// =============================================================================
+
+// Direction for ordering results
+enum OrderDirection {
+  ORDER_DIRECTION_UNSPECIFIED = 0;
+  ORDER_DIRECTION_ASC = 1;           // Ascending (nulls last)
+  ORDER_DIRECTION_DESC = 2;          // Descending (nulls last)
+  ORDER_DIRECTION_ASC_NULLS_FIRST = 3;
+  ORDER_DIRECTION_ASC_NULLS_LAST = 4;
+  ORDER_DIRECTION_DESC_NULLS_FIRST = 5;
+  ORDER_DIRECTION_DESC_NULLS_LAST = 6;
+}
+
+// Generic order specification
+message OrderBy {
+  // Column/field name to order by
+  string field = 1;
+
+  // Order direction
+  OrderDirection direction = 2;
+}
+
+// =============================================================================
+// Filter Types - Scalar Filters
+// =============================================================================
+
+// Filter for string fields
+message StringFilter {
+  optional string eq = 1;       // Equal
+  optional string neq = 2;      // Not equal
+  optional string gt = 3;       // Greater than
+  optional string gte = 4;      // Greater than or equal
+  optional string lt = 5;       // Less than
+  optional string lte = 6;      // Less than or equal
+  repeated string in = 7;       // In list
+  optional string like = 8;     // SQL LIKE pattern
+  optional string ilike = 9;    // Case-insensitive LIKE
+  optional string starts_with = 10;
+  optional string ends_with = 11;
+  optional string contains = 12;
+  optional bool is_null = 13;   // Is NULL check
+}
+
+// Filter for integer fields (int32, int64)
+message IntFilter {
+  optional int64 eq = 1;
+  optional int64 neq = 2;
+  optional int64 gt = 3;
+  optional int64 gte = 4;
+  optional int64 lt = 5;
+  optional int64 lte = 6;
+  repeated int64 in = 7;
+  optional bool is_null = 8;
+}
+
+// Filter for float fields (float, double)
+message FloatFilter {
+  optional double eq = 1;
+  optional double neq = 2;
+  optional double gt = 3;
+  optional double gte = 4;
+  optional double lt = 5;
+  optional double lte = 6;
+  optional bool is_null = 7;
+}
+
+// Filter for boolean fields
+message BoolFilter {
+  optional bool eq = 1;
+  optional bool is_null = 2;
+}
+
+// Filter for ID fields (string-based IDs like UUIDs)
+message IdFilter {
+  optional string eq = 1;
+  optional string neq = 2;
+  repeated string in = 7;
+  optional bool is_null = 8;
+}

@@ -40,7 +40,9 @@ generate: build-release
         -I../proto \
         -Itests/fixtures \
         tests/fixtures/user_service.proto \
-        tests/fixtures/user.proto
+        tests/fixtures/user.proto \
+        tests/fixtures/graphql_user.proto \
+        tests/fixtures/graphql_uuid.proto
 
 # Generate with debug output
 generate-debug: build-release

@@ -11,7 +11,8 @@ use super::options::{
     get_cached_column_options, get_cached_entity_options, parse_column_options,
     parse_entity_options,
 };
-use super::relation::generate_relation_fields;
+// Relation generation disabled for SeaORM 1.x - uses empty Relation enum
+// use super::relation::generate_relation_fields;
 use super::types::map_proto_type;
 use crate::GeneratorError;
 use heck::ToSnakeCase;
@@ -106,16 +107,14 @@ pub fn generate(
         })
         .collect();
 
-    // Generate relation fields from message-level relation definitions (SeaORM 2.0 dense format)
-    // Uses generate_relation_fields to properly handle self-referential relation pairs
-    let relation_fields: Vec<TokenStream> =
-        generate_relation_fields(&entity_options.relations, message_name);
+    // For SeaORM 1.x, relations are defined in a separate Relation enum
+    // Skip relation fields in the struct - they'll be handled by the empty Relation enum
+    // TODO: Generate proper Relation enum variants for SeaORM 1.x
 
-    // Combine regular fields, oneof fields, and relation fields
+    // Combine regular fields and oneof fields only
     let all_field_tokens: Vec<TokenStream> = field_tokens
         .into_iter()
         .chain(oneof_fields)
-        .chain(relation_fields)
         .collect();
 
     let code = quote! {
@@ -130,12 +129,14 @@ pub fn generate(
         use super::prelude::*;
         use sea_orm::entity::prelude::*;
 
-        #[sea_orm::model]
         #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
         #[sea_orm(table_name = #table_name_lit)]
         pub struct #struct_name {
             #(#all_field_tokens),*
         }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
 
         impl ActiveModelBehavior for ActiveModel {}
     };
