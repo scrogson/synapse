@@ -5,33 +5,8 @@
 mod column;
 mod entity;
 mod enum_gen;
-mod errors;
 pub mod generator;
-mod grpc;
 mod oneof;
 pub mod options;
 mod relation;
-mod service;
 mod types;
-
-/// Error type for code generation
-#[derive(Debug, thiserror::Error)]
-pub enum GeneratorError {
-    /// Code generation failed
-    #[error("code generation error: {0}")]
-    CodeGenError(String),
-
-    /// Failed to parse protobuf descriptor
-    #[error("parse error: {0}")]
-    Parse(String),
-
-    /// Failed to decode protobuf message
-    #[error("decode error: {0}")]
-    DecodeError(String),
-}
-
-impl From<String> for GeneratorError {
-    fn from(s: String) -> Self {
-        GeneratorError::CodeGenError(s)
-    }
-}

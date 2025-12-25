@@ -1,14 +1,14 @@
-//! Service trait generation for SeaORM storage
+//! Storage trait generation
 //!
-//! This module generates Storage traits from protobuf service definitions.
-//! The generated traits mirror service RPCs and can be implemented by
-//! database storage layers or mocked for testing.
+//! This module generates backend-agnostic Storage traits from protobuf service
+//! definitions. The generated traits mirror service RPCs and can be implemented
+//! by database storage layers or mocked for testing.
 
-use super::options::{
+use crate::backends::seaorm::options::{
     get_cached_rpc_method_options, get_cached_service_options, get_cached_validate_message_options,
     parse_service_options,
 };
-use crate::GeneratorError;
+use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use prost_types::compiler::code_generator_response::File;
@@ -23,12 +23,12 @@ pub fn generate(
     let file_name = file.name.as_deref().unwrap_or("");
     let service_name = service.name.as_deref().unwrap_or("");
 
-    // Check if this service has SeaORM options
+    // Check if this service has storage options
     let service_options = match get_cached_service_options(file_name, service_name) {
         Some(opts) => opts,
         None => match parse_service_options(service) {
             Some(opts) => opts,
-            None => return Ok(None), // No seaorm options, skip this service
+            None => return Ok(None), // No storage options, skip this service
         },
     };
 

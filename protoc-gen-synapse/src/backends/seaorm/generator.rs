@@ -3,8 +3,9 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, enum_gen, grpc, options, service};
-use crate::GeneratorError;
+use super::{entity, enum_gen, options};
+use crate::error::GeneratorError;
+use crate::{grpc, storage};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -41,7 +42,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         // Process each service in the file
         for svc in &file_descriptor.service {
             // Storage trait generation
-            if let Some(generated) = service::generate(file_descriptor, svc)? {
+            if let Some(generated) = storage::generate(file_descriptor, svc)? {
                 files.push(generated);
             }
             // gRPC service generation

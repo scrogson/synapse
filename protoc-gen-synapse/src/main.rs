@@ -15,9 +15,12 @@ use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
 mod backends;
+mod error;
+mod grpc;
 pub mod options;
+mod storage;
 
-pub use backends::seaorm::GeneratorError;
+pub use error::GeneratorError;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Read the CodeGeneratorRequest from stdin

@@ -5,8 +5,10 @@
 //! and handle request validation and error conversion.
 
 use super::errors::generate_error_types;
-use super::options::{get_cached_grpc_method_options, get_cached_grpc_service_options};
-use crate::GeneratorError;
+use crate::backends::seaorm::options::{
+    get_cached_grpc_method_options, get_cached_grpc_service_options,
+};
+use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use prost_types::compiler::code_generator_response::File;

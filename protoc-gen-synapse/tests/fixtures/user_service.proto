@@ -45,7 +45,6 @@ service UserService {
     trait_name: "UserStorage"
   };
   option (synapse.grpc.service) = {
-    generate_tonic: true
     struct_name: "UserGrpcService"
     storage_trait: "UserStorage"
   };
