@@ -27,8 +27,8 @@ pub fn generate(
         None => return Ok(None), // No gRPC options, skip this service
     };
 
-    // Skip if explicitly marked or if generate_tonic is false
-    if grpc_options.skip || !grpc_options.generate_tonic {
+    // Skip if explicitly marked
+    if grpc_options.skip {
         return Ok(None);
     }
 

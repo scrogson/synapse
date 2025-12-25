@@ -1,7 +1,8 @@
-// Synapse GraphQL generation options (placeholder)
+// Synapse GraphQL generation options
 //
-// These options will control how protobuf services are converted to GraphQL
-// schemas and resolvers. This is a placeholder for future implementation.
+// These options control how protobuf messages and services are converted to
+// GraphQL schemas and resolvers. The generated GraphQL layer uses relations
+// defined in synapse.storage options to create nested schemas with dataloaders.
 
 syntax = "proto3";
 
@@ -9,16 +10,73 @@ package synapse.graphql;
 
 import "google/protobuf/descriptor.proto";
 
-// Service-level GraphQL generation options (placeholder)
-message ServiceOptions {
-  // Generate GraphQL schema and resolvers
-  bool generate = 1;
+// Message-level GraphQL generation options
+message MessageOptions {
+  // Skip this message from GraphQL schema generation
+  bool skip = 1;
 
-  // Skip generation for this service
-  bool skip = 2;
+  // Override the GraphQL type name (default: message name)
+  string type_name = 2;
+
+  // Generate as GraphQL input type instead of output type
+  bool input_type = 3;
+}
+
+// Deprecation info for GraphQL schema elements
+message Deprecated {
+  // Reason for deprecation (shown in schema and introspection)
+  string reason = 1;
+}
+
+// Field-level GraphQL generation options
+message FieldOptions {
+  // Skip this field from GraphQL schema (e.g., internal FK columns)
+  bool skip = 1;
+
+  // Override the field name in GraphQL schema
+  string name = 2;
+
+  // Mark field as deprecated (presence indicates deprecated)
+  Deprecated deprecated = 3;
+}
+
+// Service-level GraphQL generation options
+message ServiceOptions {
+  // Skip generation for this service (generates by default)
+  bool skip = 1;
+
+  // GraphQL operation type: Query, Mutation, or Subscription
+  string operation = 2;
+}
+
+// Method-level GraphQL generation options
+message MethodOptions {
+  // Skip this method from GraphQL schema
+  bool skip = 1;
+
+  // Override the field name in Query/Mutation
+  string name = 2;
+
+  // Description for the GraphQL field
+  string description = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  // GraphQL message generation options
+  MessageOptions message = 53001;
+}
+
+extend google.protobuf.FieldOptions {
+  // GraphQL field generation options
+  FieldOptions field = 53002;
 }
 
 extend google.protobuf.ServiceOptions {
   // GraphQL service generation options
-  ServiceOptions service = 53001;
+  ServiceOptions service = 53003;
+}
+
+extend google.protobuf.MethodOptions {
+  // GraphQL method generation options
+  MethodOptions method = 53004;
 }

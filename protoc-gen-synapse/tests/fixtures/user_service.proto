@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package test.user;
+
+import "synapse/storage/options.proto";
+import "synapse/grpc/options.proto";
+import "synapse/validate/options.proto";
+
+// Request to get a user by ID
+message GetUserRequest {
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "GetUser"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules.required = true];
+}
+
+// Response containing a user
+message GetUserResponse {
+  User user = 1;
+}
+
+// Request to create a user
+message CreateUserRequest {
+  string email = 1;
+  string name = 2;
+}
+
+// User entity
+message User {
+  option (synapse.storage.entity) = {
+    table_name: "users"
+  };
+
+  int64 id = 1 [(synapse.storage.column) = { primary_key: true }];
+  string email = 2 [(synapse.storage.column) = { unique: true }];
+  string name = 3;
+}
+
+// User service with both storage and gRPC options
+service UserService {
+  option (synapse.storage.service_storage) = {
+    generate_storage: true
+    trait_name: "UserStorage"
+  };
+  option (synapse.grpc.service) = {
+    generate_tonic: true
+    struct_name: "UserGrpcService"
+    storage_trait: "UserStorage"
+  };
+
+  // Get a user by ID
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+
+  // Create a new user
+  rpc CreateUser(CreateUserRequest) returns (User);
+}

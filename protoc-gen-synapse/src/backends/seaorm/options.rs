@@ -830,21 +830,15 @@ fn convert_to_grpc_service_options(value: &Value) -> Option<grpc::ServiceOptions
     let msg = value.as_message()?;
     let mut result = grpc::ServiceOptions::default();
 
-    if let Some(cow) = msg.get_field_by_name("generate_tonic") {
+    if let Some(cow) = msg.get_field_by_name("skip") {
         if let Value::Bool(b) = cow.as_ref() {
-            result.generate_tonic = *b;
+            result.skip = *b;
         }
     }
 
     if let Some(cow) = msg.get_field_by_name("struct_name") {
         if let Value::String(s) = cow.as_ref() {
             result.struct_name = s.clone();
-        }
-    }
-
-    if let Some(cow) = msg.get_field_by_name("skip") {
-        if let Value::Bool(b) = cow.as_ref() {
-            result.skip = *b;
         }
     }
 
