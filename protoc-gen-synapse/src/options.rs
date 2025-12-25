@@ -15,4 +15,16 @@ pub mod synapse {
     pub mod validate {
         include!(concat!(env!("OUT_DIR"), "/synapse.validate.rs"));
     }
+
+    /// gRPC/Tonic service generation options
+    #[allow(missing_docs)]
+    pub mod grpc {
+        include!(concat!(env!("OUT_DIR"), "/synapse.grpc.rs"));
+    }
+
+    /// GraphQL generation options (placeholder)
+    #[allow(missing_docs)]
+    pub mod graphql {
+        include!(concat!(env!("OUT_DIR"), "/synapse.graphql.rs"));
+    }
 }

@@ -5,7 +5,9 @@
 mod column;
 mod entity;
 mod enum_gen;
+mod errors;
 pub mod generator;
+mod grpc;
 mod oneof;
 pub mod options;
 mod relation;

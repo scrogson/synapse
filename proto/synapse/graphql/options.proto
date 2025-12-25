@@ -1,0 +1,24 @@
+// Synapse GraphQL generation options (placeholder)
+//
+// These options will control how protobuf services are converted to GraphQL
+// schemas and resolvers. This is a placeholder for future implementation.
+
+syntax = "proto3";
+
+package synapse.graphql;
+
+import "google/protobuf/descriptor.proto";
+
+// Service-level GraphQL generation options (placeholder)
+message ServiceOptions {
+  // Generate GraphQL schema and resolvers
+  bool generate = 1;
+
+  // Skip generation for this service
+  bool skip = 2;
+}
+
+extend google.protobuf.ServiceOptions {
+  // GraphQL service generation options
+  ServiceOptions service = 53001;
+}

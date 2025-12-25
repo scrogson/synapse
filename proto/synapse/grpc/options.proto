@@ -1,0 +1,51 @@
+// Synapse gRPC/Tonic service generation options
+//
+// These options control how protobuf services are converted to Tonic gRPC
+// service implementations. The generated code wraps storage traits and handles
+// request validation, error conversion, and response mapping.
+
+syntax = "proto3";
+
+package synapse.grpc;
+
+import "google/protobuf/descriptor.proto";
+
+// Service-level gRPC generation options
+message ServiceOptions {
+  // Generate a Tonic service implementation (default: false)
+  bool generate_tonic = 1;
+
+  // Override the generated struct name (default: {ServiceName}GrpcService)
+  string struct_name = 2;
+
+  // Skip generation for this service entirely
+  bool skip = 3;
+
+  // Storage trait to use (default: {ServiceName}Storage)
+  // The generated gRPC service will be generic over this trait
+  string storage_trait = 4;
+}
+
+// Method-level gRPC generation options
+message MethodOptions {
+  // Skip generation for this method
+  bool skip = 1;
+
+  // Override the method name in the generated impl
+  string method_name = 2;
+
+  // Domain type to use for the input (from synapse.validate)
+  // If specified, the gRPC handler will validate and convert the request
+  // to this domain type before calling the storage trait
+  string input_type = 3;
+}
+
+extend google.protobuf.ServiceOptions {
+  // gRPC service generation options
+  ServiceOptions service = 52001;
+}
+
+extend google.protobuf.MethodOptions {
+  // gRPC method generation options
+  MethodOptions method = 52002;
+}

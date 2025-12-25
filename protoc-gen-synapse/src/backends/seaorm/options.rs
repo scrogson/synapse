@@ -10,6 +10,7 @@
 //! protobuf bytes.
 
 pub use crate::options::synapse::storage;
+pub use crate::options::synapse::{grpc, validate};
 use once_cell::sync::Lazy;
 use prost_reflect::{DescriptorPool, DynamicMessage, Value};
 use prost_types::{
@@ -30,6 +31,13 @@ const ENUM_EXTENSION_NAME: &str = "synapse.storage.enum_storage";
 const ENUM_VALUE_EXTENSION_NAME: &str = "synapse.storage.enum_value_storage";
 const SERVICE_EXTENSION_NAME: &str = "synapse.storage.service_storage";
 const METHOD_EXTENSION_NAME: &str = "synapse.storage.method_storage";
+
+// gRPC extension names
+const GRPC_SERVICE_EXTENSION_NAME: &str = "synapse.grpc.service";
+const GRPC_METHOD_EXTENSION_NAME: &str = "synapse.grpc.method";
+
+// Validate extension names
+const VALIDATE_MESSAGE_EXTENSION_NAME: &str = "synapse.validate.message";
 
 /// Lazily initialized descriptor pool with our extension definitions
 static DESCRIPTOR_POOL: Lazy<DescriptorPool> = Lazy::new(|| {
@@ -55,6 +63,12 @@ struct OptionsCache {
     service_options: HashMap<(String, String), storage::ServiceOptions>,
     /// Method options: (file_name, service_name, method_name) -> MethodOptions
     method_options: HashMap<(String, String, String), storage::MethodOptions>,
+    /// gRPC service options: (file_name, service_name) -> grpc::ServiceOptions
+    grpc_service_options: HashMap<(String, String), grpc::ServiceOptions>,
+    /// gRPC method options: (file_name, service_name, method_name) -> grpc::MethodOptions
+    grpc_method_options: HashMap<(String, String, String), grpc::MethodOptions>,
+    /// Validate message options: (file_name, message_name) -> validate::MessageOptions
+    validate_message_options: HashMap<(String, String), validate::MessageOptions>,
 }
 
 /// Pre-process raw CodeGeneratorRequest bytes to extract options using prost-reflect
@@ -163,6 +177,21 @@ fn extract_message_options(
                         cache
                             .entity_options
                             .insert((file_name.to_string(), full_name.clone()), entity_opts);
+                    }
+                }
+            }
+
+            // Extract validate message options (synapse.validate.message)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(VALIDATE_MESSAGE_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(validate_opts) = convert_to_validate_message_options(&ext_value) {
+                        cache.validate_message_options.insert(
+                            (file_name.to_string(), full_name.clone()),
+                            validate_opts,
+                        );
                     }
                 }
             }
@@ -351,6 +380,21 @@ fn extract_service_options(
                     }
                 }
             }
+
+            // Extract gRPC service options (synapse.grpc.service)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(GRPC_SERVICE_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(grpc_opts) = convert_to_grpc_service_options(&ext_value) {
+                        cache.grpc_service_options.insert(
+                            (file_name.to_string(), service_name.clone()),
+                            grpc_opts,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -366,6 +410,7 @@ fn extract_service_options(
 
                     if let Some(opts_cow) = method_msg.get_field_by_name("options") {
                         if let Some(opts_msg) = opts_cow.as_ref().as_message() {
+                            // Extract storage method options
                             if let Some(ext_field) =
                                 DESCRIPTOR_POOL.get_extension_by_name(METHOD_EXTENSION_NAME)
                             {
@@ -378,9 +423,30 @@ fn extract_service_options(
                                             (
                                                 file_name.to_string(),
                                                 service_name.clone(),
-                                                method_name,
+                                                method_name.clone(),
                                             ),
                                             method_opts,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract gRPC method options (synapse.grpc.method)
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(GRPC_METHOD_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(grpc_method_opts) =
+                                        convert_to_grpc_method_options(&ext_value)
+                                    {
+                                        cache.grpc_method_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                service_name.clone(),
+                                                method_name.clone(),
+                                            ),
+                                            grpc_method_opts,
                                         );
                                     }
                                 }
@@ -465,6 +531,49 @@ pub fn get_cached_rpc_method_options(
     })
 }
 
+/// Look up cached gRPC service options for a given file and service name
+pub fn get_cached_grpc_service_options(
+    file_name: &str,
+    service_name: &str,
+) -> Option<grpc::ServiceOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .grpc_service_options
+            .get(&(file_name.to_string(), service_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached gRPC method options for a given file, service, and method name
+pub fn get_cached_grpc_method_options(
+    file_name: &str,
+    service_name: &str,
+    method_name: &str,
+) -> Option<grpc::MethodOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .grpc_method_options
+            .get(&(
+                file_name.to_string(),
+                service_name.to_string(),
+                method_name.to_string(),
+            ))
+            .cloned()
+    })
+}
+
+/// Look up cached validate message options for a given file and message name
+pub fn get_cached_validate_message_options(
+    file_name: &str,
+    msg_name: &str,
+) -> Option<validate::MessageOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .validate_message_options
+            .get(&(file_name.to_string(), msg_name.to_string()))
+            .cloned()
+    })
+}
 
 // =============================================================================
 // Parse from descriptor (for tests and fallback)
@@ -710,6 +819,90 @@ fn convert_to_method_options(value: &Value) -> Option<storage::MethodOptions> {
     if let Some(cow) = msg.get_field_by_name("method_name") {
         if let Value::String(s) = cow.as_ref() {
             result.method_name = s.clone();
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to grpc::ServiceOptions
+fn convert_to_grpc_service_options(value: &Value) -> Option<grpc::ServiceOptions> {
+    let msg = value.as_message()?;
+    let mut result = grpc::ServiceOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("generate_tonic") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.generate_tonic = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("struct_name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.struct_name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("storage_trait") {
+        if let Value::String(s) = cow.as_ref() {
+            result.storage_trait = s.clone();
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to grpc::MethodOptions
+fn convert_to_grpc_method_options(value: &Value) -> Option<grpc::MethodOptions> {
+    let msg = value.as_message()?;
+    let mut result = grpc::MethodOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("method_name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.method_name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("input_type") {
+        if let Value::String(s) = cow.as_ref() {
+            result.input_type = s.clone();
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to validate::MessageOptions
+fn convert_to_validate_message_options(value: &Value) -> Option<validate::MessageOptions> {
+    let msg = value.as_message()?;
+    let mut result = validate::MessageOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("generate_conversion") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.generate_conversion = *b;
         }
     }
 

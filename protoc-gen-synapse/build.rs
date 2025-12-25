@@ -13,6 +13,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed=../proto/synapse/storage/options.proto");
     println!("cargo:rerun-if-changed=../proto/synapse/validate/options.proto");
+    println!("cargo:rerun-if-changed=../proto/synapse/grpc/options.proto");
+    println!("cargo:rerun-if-changed=../proto/synapse/graphql/options.proto");
 
     // Compile options protos to Rust types
     prost_build::Config::new()
@@ -21,6 +23,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 "../proto/synapse/storage/options.proto",
                 "../proto/synapse/validate/options.proto",
+                "../proto/synapse/grpc/options.proto",
+                "../proto/synapse/graphql/options.proto",
             ],
             &["../proto/"],
         )?;
@@ -43,6 +47,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Include synapse options
             "synapse/storage/options.proto",
             "synapse/validate/options.proto",
+            "synapse/grpc/options.proto",
+            "synapse/graphql/options.proto",
             // Include compiler types for CodeGeneratorRequest parsing
             "google/protobuf/compiler/plugin.proto",
         ])

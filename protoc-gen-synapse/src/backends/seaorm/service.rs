@@ -5,7 +5,8 @@
 //! database storage layers or mocked for testing.
 
 use super::options::{
-    get_cached_rpc_method_options, get_cached_service_options, parse_service_options,
+    get_cached_rpc_method_options, get_cached_service_options, get_cached_validate_message_options,
+    parse_service_options,
 };
 use crate::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
@@ -156,10 +157,15 @@ fn generate_trait_methods(
 
 /// Resolve a message type to its domain type if one exists
 ///
-/// Currently just returns the original type name.
-/// Domain type resolution will be added when synapse.validate is implemented.
-fn resolve_domain_type(_file_name: &str, message_name: &str) -> String {
-    // Domain type resolution disabled pending synapse.validate implementation
+/// If the message has synapse.validate.message options with generate_conversion=true
+/// and a non-empty name, that name is used as the domain type. Otherwise, the
+/// original message name is returned.
+fn resolve_domain_type(file_name: &str, message_name: &str) -> String {
+    if let Some(opts) = get_cached_validate_message_options(file_name, message_name) {
+        if opts.generate_conversion && !opts.name.is_empty() {
+            return opts.name.clone();
+        }
+    }
     message_name.to_string()
 }
 
