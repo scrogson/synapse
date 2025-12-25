@@ -5,7 +5,7 @@
 
 use super::{entity, enum_gen, options};
 use crate::error::GeneratorError;
-use crate::grpc;
+use crate::{grpc, validate};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -28,6 +28,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         for message in &file_descriptor.message_type {
             // Generate entity if has entity options
             if let Some(generated) = entity::generate(file_descriptor, message)? {
+                files.push(generated);
+            }
+            // Generate domain type if has validate options with generate_conversion
+            if let Some(generated) = validate::generate(file_descriptor, message)? {
                 files.push(generated);
             }
         }

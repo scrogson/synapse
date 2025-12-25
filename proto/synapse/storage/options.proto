@@ -125,22 +125,22 @@ extend google.protobuf.FieldOptions {
 // Enum Options
 // =============================================================================
 
-enum EnumDbType {
-  ENUM_DB_TYPE_UNSPECIFIED = 0;
-  ENUM_DB_TYPE_STRING = 1;   // Store as string
-  ENUM_DB_TYPE_INTEGER = 2;  // Store as integer
+enum EnumStorageType {
+  ENUM_STORAGE_TYPE_UNSPECIFIED = 0;
+  ENUM_STORAGE_TYPE_STRING = 1;   // Store as string
+  ENUM_STORAGE_TYPE_INTEGER = 2;  // Store as integer
 }
 
 message EnumOptions {
   // How to store in database
-  EnumDbType db_type = 1;
+  EnumStorageType storage_type = 1;
 
   // Skip code generation for this enum
   bool skip = 2;
 }
 
 extend google.protobuf.EnumOptions {
-  EnumOptions enum_storage = 50004;
+  EnumOptions enum_type = 50004;
 }
 
 message EnumValueOptions {
@@ -149,10 +149,16 @@ message EnumValueOptions {
 
   // Override the integer value stored in database
   int32 int_value = 2;
+
+  // Mark this variant as the default (adds #[default] derive)
+  bool default = 3;
+
+  // Skip this variant (don't generate it)
+  bool skip = 4;
 }
 
 extend google.protobuf.EnumValueOptions {
-  EnumValueOptions enum_value_storage = 50005;
+  EnumValueOptions enum_value = 50005;
 }
 
 // =============================================================================
@@ -171,7 +177,7 @@ message ServiceOptions {
 }
 
 extend google.protobuf.ServiceOptions {
-  ServiceOptions service_storage = 50006;
+  ServiceOptions service = 50006;
 }
 
 // RPC method options for storage trait generation
@@ -184,6 +190,6 @@ message MethodOptions {
 }
 
 extend google.protobuf.MethodOptions {
-  MethodOptions method_storage = 50007;
+  MethodOptions method = 50007;
 }
 

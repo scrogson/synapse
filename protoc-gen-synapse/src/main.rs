@@ -18,6 +18,7 @@ mod error;
 mod grpc;
 pub mod options;
 mod storage;
+mod validate;
 
 pub use error::GeneratorError;
 

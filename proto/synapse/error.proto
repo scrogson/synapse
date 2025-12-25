@@ -1,0 +1,33 @@
+// Synapse standard error types
+//
+// These error types provide rich, structured error responses for gRPC services.
+// Use FieldError for validation failures and business rule violations.
+
+syntax = "proto3";
+
+package synapse;
+
+// Structured error for rich error responses
+//
+// Use this in mutation responses to provide detailed validation feedback.
+// Example response pattern:
+//   message CreateUserResponse {
+//     optional User user = 1;
+//     repeated synapse.Error errors = 2;
+//   }
+message Error {
+  // Machine-readable error code for programmatic handling
+  // Common codes: REQUIRED, INVALID_FORMAT, TOO_LONG, TOO_SHORT,
+  //               ALREADY_EXISTS, NOT_FOUND, UNAUTHORIZED
+  string code = 1;
+
+  // Human-readable error message for display to users
+  string message = 2;
+
+  // The field path that failed (e.g., "email", "address.city")
+  // Empty for non-field-specific errors
+  string field = 3;
+
+  // Additional context (e.g., {"max": "255", "actual": "312"})
+  map<string, string> details = 4;
+}

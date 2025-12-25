@@ -2,7 +2,7 @@
 //!
 //! This module handles parsing of `(synapse.storage.entity)`, `(synapse.storage.column)`,
 //! `(synapse.storage.enum_storage)`, `(synapse.storage.enum_value_storage)`,
-//! `(synapse.storage.service_storage)`, and `(synapse.storage.method_storage)` options
+//! `(synapse.storage.service)`, and `(synapse.storage.method)` options
 //! from protobuf descriptors.
 //!
 //! Custom protobuf extensions are stored as extension fields in the options
@@ -27,17 +27,19 @@ static FILE_DESCRIPTOR_SET_BYTES: &[u8] =
 /// Extension names for synapse.storage options
 const ENTITY_EXTENSION_NAME: &str = "synapse.storage.entity";
 const COLUMN_EXTENSION_NAME: &str = "synapse.storage.column";
-const ENUM_EXTENSION_NAME: &str = "synapse.storage.enum_storage";
-const ENUM_VALUE_EXTENSION_NAME: &str = "synapse.storage.enum_value_storage";
-const SERVICE_EXTENSION_NAME: &str = "synapse.storage.service_storage";
-const METHOD_EXTENSION_NAME: &str = "synapse.storage.method_storage";
+const ENUM_EXTENSION_NAME: &str = "synapse.storage.enum_type";
+const ENUM_VALUE_EXTENSION_NAME: &str = "synapse.storage.enum_value";
+const SERVICE_EXTENSION_NAME: &str = "synapse.storage.service";
+const METHOD_EXTENSION_NAME: &str = "synapse.storage.method";
 
 // gRPC extension names
 const GRPC_SERVICE_EXTENSION_NAME: &str = "synapse.grpc.service";
 const GRPC_METHOD_EXTENSION_NAME: &str = "synapse.grpc.method";
+const GRPC_RESPONSE_EXTENSION_NAME: &str = "synapse.grpc.response";
 
 // Validate extension names
 const VALIDATE_MESSAGE_EXTENSION_NAME: &str = "synapse.validate.message";
+const VALIDATE_FIELD_EXTENSION_NAME: &str = "synapse.validate.field";
 
 /// Lazily initialized descriptor pool with our extension definitions
 static DESCRIPTOR_POOL: Lazy<DescriptorPool> = Lazy::new(|| {
@@ -67,8 +69,12 @@ struct OptionsCache {
     grpc_service_options: HashMap<(String, String), grpc::ServiceOptions>,
     /// gRPC method options: (file_name, service_name, method_name) -> grpc::MethodOptions
     grpc_method_options: HashMap<(String, String, String), grpc::MethodOptions>,
+    /// gRPC response options: (file_name, message_name) -> grpc::ResponseOptions
+    grpc_response_options: HashMap<(String, String), grpc::ResponseOptions>,
     /// Validate message options: (file_name, message_name) -> validate::MessageOptions
     validate_message_options: HashMap<(String, String), validate::MessageOptions>,
+    /// Validate field options: (file_name, message_name, field_number) -> validate::FieldOptions
+    validate_field_options: HashMap<(String, String, i32), validate::FieldOptions>,
 }
 
 /// Pre-process raw CodeGeneratorRequest bytes to extract options using prost-reflect
@@ -195,6 +201,21 @@ fn extract_message_options(
                     }
                 }
             }
+
+            // Extract gRPC response options (synapse.grpc.response)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(GRPC_RESPONSE_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(response_opts) = convert_to_grpc_response_options(&ext_value) {
+                        cache.grpc_response_options.insert(
+                            (file_name.to_string(), full_name.clone()),
+                            response_opts,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -230,6 +251,27 @@ fn extract_message_options(
                                                 field_number,
                                             ),
                                             col_opts,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract synapse.validate.field options
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(VALIDATE_FIELD_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(field_opts) =
+                                        convert_to_validate_field_options(&ext_value)
+                                    {
+                                        cache.validate_field_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                full_name.clone(),
+                                                field_number,
+                                            ),
+                                            field_opts,
                                         );
                                     }
                                 }
@@ -367,7 +409,7 @@ fn extract_service_options(
         .and_then(|v| v.as_ref().as_str().map(|s| s.to_string()))
         .unwrap_or_default();
 
-    // Extract service-level options (synapse.storage.service_storage)
+    // Extract service-level options (synapse.storage.service)
     if let Some(cow) = service.get_field_by_name("options") {
         if let Some(opts_msg) = cow.as_ref().as_message() {
             if let Some(ext_field) = DESCRIPTOR_POOL.get_extension_by_name(SERVICE_EXTENSION_NAME) {
@@ -492,6 +534,33 @@ pub fn get_cached_column_options(
     })
 }
 
+/// Look up cached enum options for a given file and enum name
+pub fn get_cached_enum_options(
+    file_name: &str,
+    enum_name: &str,
+) -> Option<storage::EnumOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .enum_options
+            .get(&(file_name.to_string(), enum_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached enum value options for a given file, enum name, and value number
+pub fn get_cached_enum_value_options(
+    file_name: &str,
+    enum_name: &str,
+    value_number: i32,
+) -> Option<storage::EnumValueOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .enum_value_options
+            .get(&(file_name.to_string(), enum_name.to_string(), value_number))
+            .cloned()
+    })
+}
+
 /// Look up cached service options for a given file and service name
 pub fn get_cached_service_options(
     file_name: &str,
@@ -571,6 +640,33 @@ pub fn get_cached_validate_message_options(
         cache
             .validate_message_options
             .get(&(file_name.to_string(), msg_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached gRPC response options for a given file and message name
+pub fn get_cached_grpc_response_options(
+    file_name: &str,
+    msg_name: &str,
+) -> Option<grpc::ResponseOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .grpc_response_options
+            .get(&(file_name.to_string(), msg_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached validate field options for a given file, message name, and field number
+pub fn get_cached_validate_field_options(
+    file_name: &str,
+    msg_name: &str,
+    field_number: i32,
+) -> Option<validate::FieldOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .validate_field_options
+            .get(&(file_name.to_string(), msg_name.to_string(), field_number))
             .cloned()
     })
 }
@@ -744,9 +840,9 @@ fn convert_to_enum_options(value: &Value) -> Option<storage::EnumOptions> {
     let msg = value.as_message()?;
     let mut result = storage::EnumOptions::default();
 
-    if let Some(cow) = msg.get_field_by_name("db_type") {
+    if let Some(cow) = msg.get_field_by_name("storage_type") {
         if let Value::EnumNumber(n) = cow.as_ref() {
-            result.db_type = *n;
+            result.storage_type = *n;
         }
     }
 
@@ -773,6 +869,18 @@ fn convert_to_enum_value_options(value: &Value) -> Option<storage::EnumValueOpti
     if let Some(cow) = msg.get_field_by_name("int_value") {
         if let Value::I32(n) = cow.as_ref() {
             result.int_value = *n;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("default") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.default = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
         }
     }
 
@@ -877,6 +985,20 @@ fn convert_to_grpc_method_options(value: &Value) -> Option<grpc::MethodOptions> 
     Some(result)
 }
 
+/// Convert a prost-reflect Value to grpc::ResponseOptions
+fn convert_to_grpc_response_options(value: &Value) -> Option<grpc::ResponseOptions> {
+    let msg = value.as_message()?;
+    let mut result = grpc::ResponseOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("rich_errors") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.rich_errors = *b;
+        }
+    }
+
+    Some(result)
+}
+
 /// Convert a prost-reflect Value to validate::MessageOptions
 fn convert_to_validate_message_options(value: &Value) -> Option<validate::MessageOptions> {
     let msg = value.as_message()?;
@@ -901,6 +1023,233 @@ fn convert_to_validate_message_options(value: &Value) -> Option<validate::Messag
     }
 
     Some(result)
+}
+
+/// Convert a prost-reflect Value to validate::FieldOptions
+fn convert_to_validate_field_options(value: &Value) -> Option<validate::FieldOptions> {
+    let msg = value.as_message()?;
+    let mut result = validate::FieldOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("skip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.skip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("rename") {
+        if let Value::String(s) = cow.as_ref() {
+            result.rename = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("type") {
+        if let Value::String(s) = cow.as_ref() {
+            result.r#type = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("rules") {
+        if let Some(rules_msg) = cow.as_ref().as_message() {
+            result.rules = Some(convert_to_validate_rules(rules_msg));
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect DynamicMessage to validate::Rules
+fn convert_to_validate_rules(msg: &DynamicMessage) -> validate::Rules {
+    let mut result = validate::Rules::default();
+
+    if let Some(cow) = msg.get_field_by_name("required") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.required = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("email") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.email = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("url") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.url = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("uuid") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.uuid = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("ascii") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.ascii = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("alphanumeric") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.alphanumeric = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("ip") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.ip = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("ipv4") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.ipv4 = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("ipv6") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.ipv6 = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("credit_card") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.credit_card = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("phone") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.phone = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("pattern") {
+        if let Value::String(s) = cow.as_ref() {
+            result.pattern = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("length") {
+        if let Some(len_msg) = cow.as_ref().as_message() {
+            result.length = Some(convert_to_length_constraint(len_msg));
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("range") {
+        if let Some(range_msg) = cow.as_ref().as_message() {
+            result.range = Some(convert_to_range_constraint(range_msg));
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("unique_items") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.unique_items = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("dive") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.dive = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("custom") {
+        if let Value::String(s) = cow.as_ref() {
+            result.custom = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("message") {
+        if let Value::String(s) = cow.as_ref() {
+            result.message = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("required_if") {
+        if let Value::String(s) = cow.as_ref() {
+            result.required_if = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("required_unless") {
+        if let Value::String(s) = cow.as_ref() {
+            result.required_unless = s.clone();
+        }
+    }
+
+    result
+}
+
+/// Convert a prost-reflect DynamicMessage to validate::LengthConstraint
+fn convert_to_length_constraint(msg: &DynamicMessage) -> validate::LengthConstraint {
+    let mut result = validate::LengthConstraint::default();
+
+    if let Some(cow) = msg.get_field_by_name("min") {
+        if let Value::U64(n) = cow.as_ref() {
+            result.min = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("max") {
+        if let Value::U64(n) = cow.as_ref() {
+            result.max = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("equal") {
+        if let Value::U64(n) = cow.as_ref() {
+            result.equal = Some(*n);
+        }
+    }
+
+    result
+}
+
+/// Convert a prost-reflect DynamicMessage to validate::RangeConstraint
+fn convert_to_range_constraint(msg: &DynamicMessage) -> validate::RangeConstraint {
+    let mut result = validate::RangeConstraint::default();
+
+    if let Some(cow) = msg.get_field_by_name("min") {
+        if let Value::F64(n) = cow.as_ref() {
+            result.min = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("max") {
+        if let Value::F64(n) = cow.as_ref() {
+            result.max = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("greater_than") {
+        if let Value::F64(n) = cow.as_ref() {
+            result.greater_than = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("less_than") {
+        if let Value::F64(n) = cow.as_ref() {
+            result.less_than = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("exclusive_min") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.exclusive_min = *b;
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("exclusive_max") {
+        if let Value::Bool(b) = cow.as_ref() {
+            result.exclusive_max = *b;
+        }
+    }
+
+    result
 }
 
 // =============================================================================
@@ -1074,12 +1423,12 @@ fn apply_enum_option(result: &mut storage::EnumOptions, opt: &UninterpretedOptio
         parse_aggregate_into_enum_options(result, aggregate);
     } else if let Some(field_name) = get_subfield_name(opt) {
         match field_name {
-            "db_type" => {
+            "storage_type" => {
                 // Parse enum value
                 let s = parse_string_option(opt);
-                result.db_type = match s.as_str() {
-                    "ENUM_DB_TYPE_STRING" => storage::EnumDbType::String as i32,
-                    "ENUM_DB_TYPE_INTEGER" => storage::EnumDbType::Integer as i32,
+                result.storage_type = match s.as_str() {
+                    "ENUM_STORAGE_TYPE_STRING" => storage::EnumStorageType::String as i32,
+                    "ENUM_STORAGE_TYPE_INTEGER" => storage::EnumStorageType::Integer as i32,
                     _ => 0,
                 };
             }
@@ -1228,10 +1577,10 @@ fn parse_aggregate_into_enum_options(result: &mut storage::EnumOptions, aggregat
         };
 
         match key {
-            "db_type" => {
-                result.db_type = match value {
-                    "ENUM_DB_TYPE_STRING" => storage::EnumDbType::String as i32,
-                    "ENUM_DB_TYPE_INTEGER" => storage::EnumDbType::Integer as i32,
+            "storage_type" => {
+                result.storage_type = match value {
+                    "ENUM_STORAGE_TYPE_STRING" => storage::EnumStorageType::String as i32,
+                    "ENUM_STORAGE_TYPE_INTEGER" => storage::EnumStorageType::Integer as i32,
                     _ => 0,
                 };
             }
@@ -1255,6 +1604,8 @@ fn parse_aggregate_into_enum_value_options(result: &mut storage::EnumValueOption
                     result.int_value = v;
                 }
             }
+            "default" => result.default = value == "true",
+            "skip" => result.skip = value == "true",
             _ => {}
         }
     }

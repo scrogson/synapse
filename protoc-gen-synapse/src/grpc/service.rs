@@ -6,7 +6,8 @@
 
 use super::errors::generate_error_types;
 use crate::storage::seaorm::options::{
-    get_cached_grpc_method_options, get_cached_grpc_service_options,
+    get_cached_grpc_method_options, get_cached_grpc_response_options,
+    get_cached_grpc_service_options, get_cached_validate_message_options,
 };
 use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
@@ -48,8 +49,8 @@ pub fn generate(
         grpc_options.storage_trait.clone()
     };
 
-    // Generate the output filename
-    let module_name = struct_name.to_snake_case();
+    // Generate the output filename (based on service name, not struct name)
+    let module_name = service_name.to_snake_case();
     let output_filename = format!(
         "{}/{}.rs",
         file.package.as_deref().unwrap_or("").replace('.', "/"),
@@ -173,16 +174,60 @@ fn generate_service_methods(
         let response_type = extract_type_name(method.output_type.as_deref());
 
         // Check if there's a domain type for validation
+        // First check method-level options, then fall back to message validate options
         let input_domain_type = method_options
             .as_ref()
             .filter(|o| !o.input_type.is_empty())
-            .map(|o| o.input_type.clone());
+            .map(|o| o.input_type.clone())
+            .or_else(|| {
+                // Check if the input message has validate options with generate_conversion
+                get_cached_validate_message_options(file_name, &request_type)
+                    .filter(|opts| opts.generate_conversion && !opts.name.is_empty())
+                    .map(|opts| opts.name.clone())
+            });
 
         let method_ident = format_ident!("{}", rust_method_name);
         let request_ident = format_ident!("{}", request_type);
         let response_ident = format_ident!("{}", response_type);
 
-        let method_body = if let Some(domain_type) = input_domain_type {
+        // Check if response type has rich_errors option
+        let rich_errors = get_cached_grpc_response_options(file_name, &response_type)
+            .map(|opts| opts.rich_errors)
+            .unwrap_or(false);
+
+        let method_body = if rich_errors {
+            // Rich errors: return validation errors in response body
+            if let Some(domain_type) = input_domain_type {
+                let domain_ident = format_ident!("{}", domain_type);
+                quote! {
+                    // Validate and convert to domain type
+                    let validated = match #domain_ident::try_from(request.into_inner()) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Ok(Response::new(#response_ident {
+                                errors: e.into_errors(),
+                                ..Default::default()
+                            }));
+                        }
+                    };
+
+                    self.storage
+                        .#method_ident(validated)
+                        .await
+                        .map(Response::new)
+                        .map_err(|e| tonic::Status::from(ServiceError::Storage(e)))
+                }
+            } else {
+                // No validation, just call storage
+                quote! {
+                    self.storage
+                        .#method_ident(request.into_inner())
+                        .await
+                        .map(Response::new)
+                        .map_err(|e| tonic::Status::from(ServiceError::Storage(e)))
+                }
+            }
+        } else if let Some(domain_type) = input_domain_type {
             // With validation: convert request to domain type first
             let domain_ident = format_ident!("{}", domain_type);
             quote! {

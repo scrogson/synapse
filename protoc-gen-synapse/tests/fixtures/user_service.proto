@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package test.user;
 
+import "synapse/error.proto";
 import "synapse/storage/options.proto";
 import "synapse/grpc/options.proto";
 import "synapse/validate/options.proto";
@@ -23,8 +24,33 @@ message GetUserResponse {
 
 // Request to create a user
 message CreateUserRequest {
-  string email = 1;
-  string name = 2;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateUser"
+  };
+
+  string email = 1 [(synapse.validate.field) = {
+    rules: {
+      required: true
+      email: true
+    }
+  }];
+  string name = 2 [(synapse.validate.field) = {
+    rules: {
+      required: true
+      length: { min: 1 max: 100 }
+    }
+  }];
+}
+
+// Response for user creation
+message CreateUserResponse {
+  option (synapse.grpc.response) = { rich_errors: true };
+
+  // The created user (present on success)
+  optional User user = 1;
+  // Validation/business errors (present on failure)
+  repeated synapse.Error errors = 2;
 }
 
 // User entity
@@ -40,7 +66,7 @@ message User {
 
 // User service with both storage and gRPC options
 service UserService {
-  option (synapse.storage.service_storage) = {
+  option (synapse.storage.service) = {
     generate_storage: true
     trait_name: "UserStorage"
   };
@@ -53,5 +79,5 @@ service UserService {
   rpc GetUser(GetUserRequest) returns (GetUserResponse);
 
   // Create a new user
-  rpc CreateUser(CreateUserRequest) returns (User);
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
 }

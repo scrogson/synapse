@@ -37,6 +37,14 @@ message MethodOptions {
   string input_type = 3;
 }
 
+// Response message options for gRPC
+message ResponseOptions {
+  // Enable rich error responses for mutations
+  // When true, validation errors are returned in the response's `errors` field
+  // instead of as gRPC status errors
+  bool rich_errors = 1;
+}
+
 extend google.protobuf.ServiceOptions {
   // gRPC service generation options
   ServiceOptions service = 52001;
@@ -45,4 +53,9 @@ extend google.protobuf.ServiceOptions {
 extend google.protobuf.MethodOptions {
   // gRPC method generation options
   MethodOptions method = 52002;
+}
+
+extend google.protobuf.MessageOptions {
+  // gRPC response generation options
+  ResponseOptions response = 52003;
 }

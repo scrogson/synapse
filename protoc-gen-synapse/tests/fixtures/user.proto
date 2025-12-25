@@ -71,12 +71,12 @@ message Post {
 
 // Status enum stored as string
 enum UserStatus {
-  option (synapse.storage.enum_storage) = {
-    db_type: ENUM_DB_TYPE_STRING
+  option (synapse.storage.enum_type) = {
+    storage_type: ENUM_STORAGE_TYPE_STRING
   };
 
   USER_STATUS_UNSPECIFIED = 0;
-  USER_STATUS_ACTIVE = 1;
+  USER_STATUS_ACTIVE = 1 [(synapse.storage.enum_value) = { default: true }];
   USER_STATUS_INACTIVE = 2;
   USER_STATUS_BANNED = 3;
 }
