@@ -52,6 +52,12 @@ message ColumnOptions {
   // Embed this field as JSON (for nested messages)
   bool embed = 6;
 
+  // Explicit column type override (backend-specific, e.g., "Uuid", "Json", "Text")
+  string column_type = 7;
+
+  // Default expression for computed values (e.g., "Expr::current_timestamp()")
+  string default_expr = 8;
+
   // Backend-specific type hints
   // Keys: "seaorm", "ecto", "gorm", etc.
   // Values: Backend-specific type strings
@@ -68,10 +74,10 @@ extend google.protobuf.FieldOptions {
 
 enum RelationType {
   RELATION_TYPE_UNSPECIFIED = 0;
-  BELONGS_TO = 1;
-  HAS_ONE = 2;
-  HAS_MANY = 3;
-  MANY_TO_MANY = 4;
+  RELATION_TYPE_BELONGS_TO = 1;
+  RELATION_TYPE_HAS_ONE = 2;
+  RELATION_TYPE_HAS_MANY = 3;
+  RELATION_TYPE_MANY_TO_MANY = 4;
 }
 
 message RelationDef {
@@ -167,3 +173,17 @@ message ServiceOptions {
 extend google.protobuf.ServiceOptions {
   ServiceOptions service_storage = 50006;
 }
+
+// RPC method options for storage trait generation
+message MethodOptions {
+  // Skip this method in storage trait
+  bool skip = 1;
+
+  // Custom Rust method name (defaults to snake_case of RPC name)
+  string method_name = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  MethodOptions method_storage = 50007;
+}
+

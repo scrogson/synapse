@@ -1,8 +1,8 @@
 //! Build script for protoc-gen-synapse
 //!
-//! This compiles proto/synapse/storage/options.proto to generate the Rust types
-//! for parsing Synapse protobuf extensions. It also generates a file
-//! descriptor set for use with prost-reflect to parse extension fields.
+//! This compiles synapse proto options to generate Rust types for parsing
+//! protobuf extensions. It also generates a file descriptor set for use
+//! with prost-reflect to parse extension fields.
 
 use std::env;
 use std::path::PathBuf;
@@ -12,16 +12,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
 
     println!("cargo:rerun-if-changed=../proto/synapse/storage/options.proto");
+    println!("cargo:rerun-if-changed=../proto/synapse/validate/options.proto");
 
-    // Compile options.proto to Rust types
+    // Compile options protos to Rust types
     prost_build::Config::new()
         .out_dir(&out_dir)
         .compile_protos(
-            &["../proto/synapse/storage/options.proto"],
+            &[
+                "../proto/synapse/storage/options.proto",
+                "../proto/synapse/validate/options.proto",
+            ],
             &["../proto/"],
         )?;
 
     // Generate a FileDescriptorSet for prost-reflect
+    // Must include synapse options AND google.protobuf.compiler types
     let fds_path = out_dir.join("file_descriptor_set.bin");
 
     // Find the protobuf include path
@@ -35,7 +40,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--include_source_info",
             "-I../proto",
             &format!("-I{}", protobuf_include),
+            // Include synapse options
             "synapse/storage/options.proto",
+            "synapse/validate/options.proto",
+            // Include compiler types for CodeGeneratorRequest parsing
+            "google/protobuf/compiler/plugin.proto",
         ])
         .status()?;
 

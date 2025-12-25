@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package test.models;
+
+import "google/protobuf/timestamp.proto";
+import "synapse/storage/options.proto";
+
+// User entity with synapse.storage options
+message User {
+  option (synapse.storage.entity) = {
+    table_name: "users"
+    relations: [
+      {
+        name: "posts"
+        type: RELATION_TYPE_HAS_MANY
+        related: "Post"
+        foreign_key: "author_id"
+      }
+    ]
+  };
+
+  // Primary key
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  // Username with unique constraint
+  string username = 2 [(synapse.storage.column) = {
+    unique: true
+    column_name: "user_name"
+  }];
+
+  // Email
+  string email = 3;
+
+  // Optional bio field
+  optional string bio = 4;
+
+  // Created timestamp
+  google.protobuf.Timestamp created_at = 5 [(synapse.storage.column) = {
+    default_expr: "Expr::current_timestamp()"
+  }];
+}
+
+// Post entity
+message Post {
+  option (synapse.storage.entity) = {
+    table_name: "posts"
+    relations: [
+      {
+        name: "author"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "User"
+        foreign_key: "author_id"
+        references: "id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column) = {
+    primary_key: true
+    auto_increment: true
+  }];
+
+  string title = 2;
+  string content = 3;
+  int64 author_id = 4;
+  optional google.protobuf.Timestamp published_at = 5;
+}
+
+// Status enum stored as string
+enum UserStatus {
+  option (synapse.storage.enum_storage) = {
+    db_type: ENUM_DB_TYPE_STRING
+  };
+
+  USER_STATUS_UNSPECIFIED = 0;
+  USER_STATUS_ACTIVE = 1;
+  USER_STATUS_INACTIVE = 2;
+  USER_STATUS_BANNED = 3;
+}

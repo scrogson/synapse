@@ -1,0 +1,133 @@
+// Synapse Validation Options
+//
+// Language-agnostic validation annotations for protobuf messages.
+// These options can be used to generate validation code for multiple
+// targets: Rust (garde), TypeScript (zod), Go, Elixir (Ecto), etc.
+//
+// Validation can be applied at any layer:
+// - Client-side (before sending requests)
+// - API gateway (GraphQL, gRPC, REST)
+// - Service layer (before business logic)
+// - Storage layer (before database operations)
+
+syntax = "proto3";
+
+package synapse.validate;
+
+import "google/protobuf/descriptor.proto";
+
+// =============================================================================
+// Message-level Validation Options
+// =============================================================================
+
+message MessageOptions {
+  // Skip validation code generation for this message
+  bool skip = 1;
+
+  // Custom validation struct name (defaults to message name)
+  string name = 2;
+
+  // Generate conversion from proto message (e.g., TryFrom in Rust)
+  bool generate_conversion = 3;
+}
+
+extend google.protobuf.MessageOptions {
+  MessageOptions message = 51001;
+}
+
+// =============================================================================
+// Field-level Validation Options
+// =============================================================================
+
+message FieldOptions {
+  // Skip validation for this field
+  bool skip = 1;
+
+  // Rename field in generated validation struct
+  string rename = 2;
+
+  // Custom type for this field (e.g., "Uuid", "Email", "Url")
+  // The generator will use appropriate conversion (FromStr, TryFrom, etc.)
+  string type = 3;
+
+  // Validation rules
+  Rules rules = 10;
+}
+
+extend google.protobuf.FieldOptions {
+  FieldOptions field = 51002;
+}
+
+// =============================================================================
+// Validation Rules
+// =============================================================================
+
+message Rules {
+  // Field is required (non-empty for strings, Some for optionals)
+  bool required = 1;
+
+  // String format validations
+  bool email = 2;
+  bool url = 3;
+  bool uuid = 4;
+  bool ascii = 5;
+  bool alphanumeric = 6;
+  bool ip = 7;
+  bool ipv4 = 8;
+  bool ipv6 = 9;
+  bool credit_card = 10;
+  bool phone = 11;
+
+  // Pattern matching
+  string pattern = 20;
+
+  // String/collection length constraints
+  LengthConstraint length = 30;
+
+  // Numeric range constraints
+  RangeConstraint range = 31;
+
+  // Collection constraints
+  bool unique_items = 40;
+
+  // Nested validation (for message fields)
+  bool dive = 50;
+
+  // Custom validation function/method name
+  string custom = 60;
+
+  // Error message override
+  string message = 70;
+
+  // Conditional validation (field name to check)
+  string required_if = 80;
+  string required_unless = 81;
+}
+
+message LengthConstraint {
+  optional uint64 min = 1;
+  optional uint64 max = 2;
+  optional uint64 equal = 3;
+}
+
+message RangeConstraint {
+  optional double min = 1;
+  optional double max = 2;
+  optional double greater_than = 3;
+  optional double less_than = 4;
+  bool exclusive_min = 5;
+  bool exclusive_max = 6;
+}
+
+// =============================================================================
+// Oneof Validation Options
+// =============================================================================
+
+message OneofOptions {
+  // Require exactly one field to be set
+  bool required = 1;
+}
+
+extend google.protobuf.OneofOptions {
+  OneofOptions oneof = 51003;
+}

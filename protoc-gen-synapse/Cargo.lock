@@ -266,6 +266,7 @@ name = "protoc-gen-synapse"
 version = "0.1.0"
 dependencies = [
  "heck",
+ "once_cell",
  "prettyplease",
  "proc-macro2",
  "prost",

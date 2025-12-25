@@ -2,6 +2,9 @@
 target/
 *.rs.bk
 
+# Generated code
+protoc-gen-synapse/gen/
+
 # IDE
 .idea/
 .vscode/

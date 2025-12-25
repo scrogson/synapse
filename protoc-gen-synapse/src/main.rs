@@ -6,30 +6,47 @@
 //!   protoc --synapse_out=backend=seaorm:./gen proto/*.proto
 //!   protoc --synapse_out=backend=ecto:./gen proto/*.proto
 
+#![deny(warnings)]
+#![deny(missing_docs)]
+
 use std::io::{self, Read, Write};
 
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
 mod backends;
-mod ir;
-mod options;
+pub mod options;
 
-use backends::Backend;
+pub use backends::seaorm::GeneratorError;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Read the CodeGeneratorRequest from stdin
     let mut input = Vec::new();
     io::stdin().read_to_end(&mut input)?;
 
-    let request = CodeGeneratorRequest::decode(&input[..])?;
-
     // Parse the parameter to get the backend
-    let backend_name = parse_backend_param(request.parameter.as_deref().unwrap_or(""));
-    let backend = backends::get_backend(&backend_name)?;
+    let param_str = {
+        // Peek at the request to get parameter before consuming
+        let request = CodeGeneratorRequest::decode(&input[..])?;
+        request.parameter.clone().unwrap_or_default()
+    };
+    let backend_name = parse_backend_param(&param_str);
 
-    // Generate code
-    let response = generate(&request, backend.as_ref())?;
+    // Generate code using the appropriate backend
+    let response = match backend_name.as_str() {
+        "seaorm" => {
+            // Use the SeaORM backend's generate_from_bytes which handles extension caching
+            backends::seaorm::generator::generate_from_bytes(&input)?
+        }
+        _ => {
+            // Unknown backend
+            CodeGeneratorResponse {
+                error: Some(format!("Unknown backend: {}", backend_name)),
+                supported_features: Some(1),
+                ..Default::default()
+            }
+        }
+    };
 
     // Write the response to stdout
     let mut output = Vec::new();
@@ -46,27 +63,6 @@ fn parse_backend_param(param: &str) -> String {
             return value.to_string();
         }
     }
-    // Default to seaorm for backwards compatibility
+    // Default to seaorm
     "seaorm".to_string()
-}
-
-/// Generate code using the specified backend
-fn generate(
-    request: &CodeGeneratorRequest,
-    backend: &dyn Backend,
-) -> Result<CodeGeneratorResponse, Box<dyn std::error::Error>> {
-    let mut response = CodeGeneratorResponse::default();
-
-    // TODO: Parse proto files into IR
-    // TODO: Generate code using backend
-
-    // For now, just set the supported features
-    response.supported_features = Some(1); // FEATURE_PROTO3_OPTIONAL
-
-    eprintln!(
-        "protoc-gen-synapse: Using {} backend (not yet implemented)",
-        backend.name()
-    );
-
-    Ok(response)
 }
