@@ -79,7 +79,7 @@ fn generate_object_type(
     // Generate relation resolver methods from storage options
     let entity_opts = get_cached_entity_options(file_name, msg_name);
     let relation_resolvers = if let Some(ref entity) = entity_opts {
-        generate_relation_resolvers(&type_name, &entity.relations)?
+        generate_relation_resolvers(&type_name, &entity.relations, &message.field)?
     } else {
         quote! {}
     };
@@ -629,11 +629,12 @@ fn generate_field_resolver_body(field: &FieldDescriptorProto, is_optional: bool)
 fn generate_relation_resolvers(
     parent_type: &str,
     relations: &[RelationDef],
+    fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     let mut resolvers = Vec::new();
 
     for relation in relations {
-        let resolver = generate_single_relation_resolver(parent_type, relation)?;
+        let resolver = generate_single_relation_resolver(parent_type, relation, fields)?;
         resolvers.push(resolver);
     }
 
@@ -644,23 +645,63 @@ fn generate_relation_resolvers(
 fn generate_single_relation_resolver(
     parent_type: &str,
     relation: &RelationDef,
+    fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     let relation_name = &relation.name;
     let related_type = &relation.related;
     let foreign_key = &relation.foreign_key;
 
+    // Skip if relation_name or related_type is empty
+    if relation_name.is_empty() || related_type.is_empty() {
+        return Ok(quote! {});
+    }
+
     let method_ident = format_ident!("{}", relation_name.to_snake_case());
     let related_ident = format_ident!("{}", related_type.to_upper_camel_case());
-    let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
+
+    // Check if the FK field is optional (proto3_optional)
+    let fk_snake = foreign_key.to_snake_case();
+    let fk_is_optional = fields
+        .iter()
+        .find(|f| f.name.as_deref().map(|n| n.to_snake_case()) == Some(fk_snake.clone()))
+        .map(|f| f.proto3_optional.unwrap_or(false))
+        .unwrap_or(false);
 
     let relation_type = relation.r#type();
 
     match relation_type {
-        RelationType::HasMany | RelationType::ManyToMany => {
+        RelationType::ManyToMany => {
+            // MANY_TO_MANY: Uses a through table - skip for now
+            // TODO: Implement many-to-many resolution via join table queries
+            Ok(quote! {})
+        }
+        RelationType::HasMany => {
             // HAS_MANY: Generate both DataLoader-backed and paginated resolvers
             // 1. posts: [Post!]! - DataLoader for efficient batching
             // 2. postsCollection(...): PostConnection! - Paginated via gRPC
 
+            // Skip paginated collection if no foreign_key is specified
+            if foreign_key.is_empty() {
+                let loader_name = format!(
+                    "{}sBy{}Loader",
+                    related_type.to_upper_camel_case(),
+                    parent_type.to_upper_camel_case()
+                );
+                let loader_ident = format_ident!("{}", loader_name);
+
+                return Ok(quote! {
+                    /// Resolve related #relation_name (uses DataLoader for batching)
+                    async fn #method_ident(
+                        &self,
+                        ctx: &Context<'_>,
+                    ) -> Result<Vec<super::#related_ident>> {
+                        let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                        Ok(loader.load_one(self.id).await?.unwrap_or_default())
+                    }
+                });
+            }
+
+            let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
             let loader_name = format!(
                 "{}sBy{}Loader",
                 related_type.to_upper_camel_case(),
@@ -738,22 +779,46 @@ fn generate_single_relation_resolver(
         RelationType::BelongsTo | RelationType::HasOne => {
             // BELONGS_TO: Post.author - use DataLoader for batched lookup
             // DataLoader batches multiple load_one(author_id) calls into a single batch
+
+            // Skip if no foreign_key is specified
+            if foreign_key.is_empty() {
+                return Ok(quote! {});
+            }
+
+            let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
             let loader_name = format!("{}Loader", related_type.to_upper_camel_case());
             let loader_ident = format_ident!("{}", loader_name);
 
             // For BELONGS_TO, we need the FK on this type, not the related type
             // The FK is on the current entity pointing to the related entity
-            Ok(quote! {
-                /// Resolve related #relation_name (uses DataLoader for batching)
-                async fn #method_ident(
-                    &self,
-                    ctx: &Context<'_>,
-                ) -> Result<Option<super::#related_ident>> {
-                    // Use DataLoader for efficient batched loading
-                    let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
-                    Ok(loader.load_one(self.#fk_ident).await?)
-                }
-            })
+            if fk_is_optional {
+                // Handle optional FK - return None if FK is not set
+                Ok(quote! {
+                    /// Resolve related #relation_name (uses DataLoader for batching)
+                    async fn #method_ident(
+                        &self,
+                        ctx: &Context<'_>,
+                    ) -> Result<Option<super::#related_ident>> {
+                        let Some(fk) = self.#fk_ident else {
+                            return Ok(None);
+                        };
+                        let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                        Ok(loader.load_one(fk).await?)
+                    }
+                })
+            } else {
+                // Required FK - use directly
+                Ok(quote! {
+                    /// Resolve related #relation_name (uses DataLoader for batching)
+                    async fn #method_ident(
+                        &self,
+                        ctx: &Context<'_>,
+                    ) -> Result<Option<super::#related_ident>> {
+                        let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                        Ok(loader.load_one(self.#fk_ident).await?)
+                    }
+                })
+            }
         }
         _ => Ok(quote! {}),
     }

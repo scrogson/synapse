@@ -56,7 +56,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
                 files.push(generated);
             }
             // Generate DataLoaders for relations
-            for generated in graphql::generate_dataloaders(proto_file, message)? {
+            for generated in graphql::generate_dataloaders(proto_file, message, &request.proto_file)? {
                 files.push(generated);
             }
             // Generate entity loader for BelongsTo relations

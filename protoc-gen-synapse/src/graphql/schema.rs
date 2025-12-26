@@ -80,12 +80,16 @@ pub fn collect_schema_info(
                 info.has_auto_filters = true;
 
                 // Collect HasMany relations for DataLoader registration
+                // Only include relations that have a foreign_key (ManyToMany uses through table)
                 for relation in &entity.relations {
                     use crate::options::synapse::storage::RelationType;
-                    if matches!(
-                        relation.r#type(),
-                        RelationType::HasMany | RelationType::ManyToMany
-                    ) {
+                    let has_fk = !relation.foreign_key.is_empty();
+                    if has_fk
+                        && matches!(
+                            relation.r#type(),
+                            RelationType::HasMany | RelationType::ManyToMany
+                        )
+                    {
                         info.has_many_relations.push((
                             msg_name.to_string(),
                             relation.related.clone(),

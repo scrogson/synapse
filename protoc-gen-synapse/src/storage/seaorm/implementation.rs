@@ -628,6 +628,13 @@ fn infer_entity_name(method_name: &str) -> String {
         .or_else(|| method_name.strip_prefix("Delete"))
         .unwrap_or(method_name);
 
+    // Handle "GetUserByEmail" -> "User" (strip "ByXxx" suffix)
+    let name = if let Some(idx) = name.find("By") {
+        &name[..idx]
+    } else {
+        name
+    };
+
     // Remove trailing 's' for List methods (ListUsers -> User)
     if method_name.starts_with("List") && name.ends_with('s') {
         name.strip_suffix('s').unwrap_or(name).to_string()

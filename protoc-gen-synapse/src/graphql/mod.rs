@@ -53,8 +53,9 @@ pub fn generate_node_interface(file: &FileDescriptorProto) -> Result<Option<File
 pub fn generate_dataloaders(
     file: &FileDescriptorProto,
     message: &DescriptorProto,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
-    dataloader::generate(file, message)
+    dataloader::generate(file, message, all_files)
 }
 
 /// Generate an entity loader for a message (for BelongsTo relations)

@@ -20,6 +20,7 @@ use quote::{format_ident, quote};
 pub fn generate(
     file: &FileDescriptorProto,
     message: &DescriptorProto,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
@@ -56,7 +57,7 @@ pub fn generate(
 
     // Generate a loader for each relation
     for relation in &entity.relations {
-        if let Some(loader) = generate_relation_loader(file, &type_name, relation)? {
+        if let Some(loader) = generate_relation_loader(file, &type_name, relation, all_files)? {
             loaders.push(loader);
         }
     }
@@ -71,6 +72,7 @@ fn generate_relation_loader(
     file: &FileDescriptorProto,
     parent_type: &str,
     relation: &crate::options::synapse::storage::RelationDef,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Option<File>, GeneratorError> {
     let related_type = &relation.related;
     let foreign_key = &relation.foreign_key;
@@ -87,6 +89,15 @@ fn generate_relation_loader(
     if !is_many {
         return Ok(None);
     }
+
+    // Skip if related_type or foreign_key is empty
+    // ManyToMany relations use `through` table instead of foreign_key
+    if related_type.is_empty() || foreign_key.is_empty() {
+        return Ok(None);
+    }
+
+    // Check if the FK field on the related entity is optional
+    let fk_is_optional = find_field_optionality(all_files, related_type, foreign_key);
 
     // Generate loader name (e.g., PostsByUserLoader)
     let loader_name = format!(
@@ -112,6 +123,26 @@ fn generate_relation_loader(
     let list_request = format_ident!("List{}sRequest", related_type.to_upper_camel_case());
     let list_method = format_ident!("list_{}s", related_type.to_snake_case());
     let filter_type = format_ident!("{}Filter", related_type.to_upper_camel_case());
+
+    // Generate populate code based on FK optionality
+    let populate_code = if fk_is_optional {
+        // Optional FK: unwrap before using as map key
+        quote! {
+            if let Some(key) = entity.#fk_ident {
+                if let Some(vec) = map.get_mut(&key) {
+                    vec.push(entity);
+                }
+            }
+        }
+    } else {
+        // Required FK: use directly
+        quote! {
+            let key = entity.#fk_ident;
+            if let Some(vec) = map.get_mut(&key) {
+                vec.push(entity);
+            }
+        }
+    };
 
     let code = quote! {
         //! DataLoader for HasMany relation
@@ -190,10 +221,7 @@ fn generate_relation_loader(
                 for edge in response.into_inner().edges {
                     if let Some(node) = edge.node {
                         let entity = super::#related_ident::from(node);
-                        let key = entity.#fk_ident;
-                        if let Some(vec) = map.get_mut(&key) {
-                            vec.push(entity);
-                        }
+                        #populate_code
                     }
                 }
 
@@ -370,4 +398,30 @@ pub fn generate_entity_loader(
         content: Some(formatted),
         ..Default::default()
     }))
+}
+
+/// Find if a field on a message is optional (proto3_optional)
+fn find_field_optionality(
+    all_files: &[FileDescriptorProto],
+    message_name: &str,
+    field_name: &str,
+) -> bool {
+    let field_snake = field_name.to_snake_case();
+    let message_camel = message_name.to_upper_camel_case();
+
+    for file in all_files {
+        for message in &file.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+            if msg_name.to_upper_camel_case() == message_camel {
+                // Found the message, now find the field
+                for field in &message.field {
+                    let name = field.name.as_deref().unwrap_or("");
+                    if name.to_snake_case() == field_snake {
+                        return field.proto3_optional.unwrap_or(false);
+                    }
+                }
+            }
+        }
+    }
+    false
 }

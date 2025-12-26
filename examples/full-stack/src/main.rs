@@ -25,10 +25,7 @@ use sea_orm::Database;
 use tonic::transport::{Channel, Server as TonicServer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-// Include the generated code
-mod generated;
-
-use generated::blog::{
+use synapse_full_stack_example::blog::{
     user_service_server::UserServiceServer,
     post_service_server::PostServiceServer,
     user_service_client::UserServiceClient,
