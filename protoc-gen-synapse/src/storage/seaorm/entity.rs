@@ -58,10 +58,10 @@ pub fn generate(
         entity_options.table_name.clone()
     };
 
-    // Generate the output filename
+    // Generate the output filename (in entities/ subdirectory)
     let module_name = message_name.to_snake_case();
     let output_filename = format!(
-        "{}/{}.rs",
+        "{}/entities/{}.rs",
         file.package.as_deref().unwrap_or("").replace('.', "/"),
         module_name
     );
@@ -126,7 +126,7 @@ pub fn generate(
         #![allow(missing_docs)]
         #![allow(unused_imports)]
 
-        use super::prelude::*;
+        use super::super::prelude::*;
         use sea_orm::entity::prelude::*;
 
         #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]

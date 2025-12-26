@@ -44,10 +44,10 @@ pub fn generate(
         service_options.trait_name.clone()
     };
 
-    // Generate the output filename
+    // Generate the output filename (in storage/ subdirectory)
     let module_name = trait_name.to_snake_case();
     let output_filename = format!(
-        "{}/{}.rs",
+        "{}/storage/{}.rs",
         file.package.as_deref().unwrap_or("").replace('.', "/"),
         module_name
     );
@@ -71,7 +71,7 @@ pub fn generate(
         #![allow(missing_docs)]
         #![allow(unused_imports)]
 
-        use super::prelude::*;
+        use super::super::prelude::*;
 
         /// Storage error type
         #[derive(Debug, thiserror::Error)]

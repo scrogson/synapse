@@ -46,11 +46,11 @@ pub fn generate(
         service_options.trait_name.clone()
     };
 
-    // Generate the output filename
+    // Generate the output filename (in storage/ subdirectory)
     let impl_name = format!("SeaOrm{}", trait_name);
     let module_name = impl_name.to_snake_case();
     let output_filename = format!(
-        "{}/{}.rs",
+        "{}/storage/{}.rs",
         file.package.as_deref().unwrap_or("").replace('.', "/"),
         module_name
     );
@@ -81,11 +81,12 @@ pub fn generate(
         #![allow(missing_docs)]
         #![allow(unused_imports)]
 
-        use super::prelude::*;
+        use super::super::prelude::*;
+        use super::super::entities;
         use super::#trait_module::{#trait_ident, StorageError};
         use super::conversions::ApplyUpdate;
         // PageInfo is from synapse.relay package
-        use super::super::synapse::relay::PageInfo;
+        use super::super::super::synapse::relay::PageInfo;
         use sea_orm::{
             ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
             QueryFilter, QueryOrder, Set,
@@ -253,7 +254,7 @@ fn generate_get_impl(
     let entity_type = format_ident!("{}", entity_module.to_string().to_upper_camel_case());
 
     quote! {
-        let model = #entity_module::Entity::find_by_id(request.id)
+        let model = entities::#entity_module::Entity::find_by_id(request.id)
             .one(&self.db)
             .await
             .map_err(StorageError::Database)?
@@ -308,13 +309,13 @@ fn generate_list_impl(
             #order_by_code
             if !ordered {
                 // Default ordering by id if no order specified
-                query = query.order_by_asc(#entity_module::Column::Id);
+                query = query.order_by_asc(entities::#entity_module::Column::Id);
             }
         }
     } else {
         quote! {
             // Default ordering by id
-            query = query.order_by_asc(#entity_module::Column::Id);
+            query = query.order_by_asc(entities::#entity_module::Column::Id);
         }
     };
 
@@ -325,7 +326,7 @@ fn generate_list_impl(
         let limit = request.first.or(request.last).unwrap_or(20) as u64;
 
         // Build base query
-        let mut query = #entity_module::Entity::find();
+        let mut query = entities::#entity_module::Entity::find();
 
         // Apply filters
         #filter_code
@@ -335,14 +336,14 @@ fn generate_list_impl(
         // Apply cursor filter (after = id to start after)
         if let Some(ref after) = request.after {
             if let Ok(cursor_id) = after.parse::<i64>() {
-                query = query.filter(#entity_module::Column::Id.gt(cursor_id));
+                query = query.filter(entities::#entity_module::Column::Id.gt(cursor_id));
             }
         }
 
         // Apply cursor filter (before = id to end before)
         if let Some(ref before) = request.before {
             if let Ok(cursor_id) = before.parse::<i64>() {
-                query = query.filter(#entity_module::Column::Id.lt(cursor_id));
+                query = query.filter(entities::#entity_module::Column::Id.lt(cursor_id));
             }
         }
 
@@ -464,31 +465,31 @@ fn generate_field_filter_code(
         FilterKind::Int => {
             quote! {
                 if let Some(ref f) = filter.#field_ident {
-                    if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }
-                    if let Some(v) = f.neq { cond = cond.add(#entity_module::Column::#column_ident.ne(v)); }
-                    if let Some(v) = f.gt { cond = cond.add(#entity_module::Column::#column_ident.gt(v)); }
-                    if let Some(v) = f.gte { cond = cond.add(#entity_module::Column::#column_ident.gte(v)); }
-                    if let Some(v) = f.lt { cond = cond.add(#entity_module::Column::#column_ident.lt(v)); }
-                    if let Some(v) = f.lte { cond = cond.add(#entity_module::Column::#column_ident.lte(v)); }
-                    if !f.r#in.is_empty() { cond = cond.add(#entity_module::Column::#column_ident.is_in(f.r#in.clone())); }
+                    if let Some(v) = f.eq { cond = cond.add(entities::#entity_module::Column::#column_ident.eq(v)); }
+                    if let Some(v) = f.neq { cond = cond.add(entities::#entity_module::Column::#column_ident.ne(v)); }
+                    if let Some(v) = f.gt { cond = cond.add(entities::#entity_module::Column::#column_ident.gt(v)); }
+                    if let Some(v) = f.gte { cond = cond.add(entities::#entity_module::Column::#column_ident.gte(v)); }
+                    if let Some(v) = f.lt { cond = cond.add(entities::#entity_module::Column::#column_ident.lt(v)); }
+                    if let Some(v) = f.lte { cond = cond.add(entities::#entity_module::Column::#column_ident.lte(v)); }
+                    if !f.r#in.is_empty() { cond = cond.add(entities::#entity_module::Column::#column_ident.is_in(f.r#in.clone())); }
                 }
             }
         }
         FilterKind::String => {
             quote! {
                 if let Some(ref f) = filter.#field_ident {
-                    if let Some(ref v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v.clone())); }
-                    if let Some(ref v) = f.neq { cond = cond.add(#entity_module::Column::#column_ident.ne(v.clone())); }
-                    if let Some(ref v) = f.contains { cond = cond.add(#entity_module::Column::#column_ident.contains(v)); }
-                    if let Some(ref v) = f.starts_with { cond = cond.add(#entity_module::Column::#column_ident.starts_with(v)); }
-                    if let Some(ref v) = f.ends_with { cond = cond.add(#entity_module::Column::#column_ident.ends_with(v)); }
+                    if let Some(ref v) = f.eq { cond = cond.add(entities::#entity_module::Column::#column_ident.eq(v.clone())); }
+                    if let Some(ref v) = f.neq { cond = cond.add(entities::#entity_module::Column::#column_ident.ne(v.clone())); }
+                    if let Some(ref v) = f.contains { cond = cond.add(entities::#entity_module::Column::#column_ident.contains(v)); }
+                    if let Some(ref v) = f.starts_with { cond = cond.add(entities::#entity_module::Column::#column_ident.starts_with(v)); }
+                    if let Some(ref v) = f.ends_with { cond = cond.add(entities::#entity_module::Column::#column_ident.ends_with(v)); }
                 }
             }
         }
         FilterKind::Bool => {
             quote! {
                 if let Some(ref f) = filter.#field_ident {
-                    if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }
+                    if let Some(v) = f.eq { cond = cond.add(entities::#entity_module::Column::#column_ident.eq(v)); }
                 }
             }
         }
@@ -528,9 +529,9 @@ fn generate_order_by_code(
             if let Some(d) = o.#field_ident {
                 ordered = true;
                 query = if d == 1 {
-                    query.order_by_asc(#entity_module::Column::#column_ident)
+                    query.order_by_asc(entities::#entity_module::Column::#column_ident)
                 } else {
-                    query.order_by_desc(#entity_module::Column::#column_ident)
+                    query.order_by_desc(entities::#entity_module::Column::#column_ident)
                 };
             }
         });
@@ -555,7 +556,7 @@ fn generate_create_impl(
 ) -> TokenStream {
     quote! {
         // Request fields are directly on the request (no nested input)
-        let active_model: #entity_module::ActiveModel = request.into();
+        let active_model: entities::#entity_module::ActiveModel = request.into();
         let model = active_model.insert(&self.db).await.map_err(StorageError::Database)?;
 
         Ok(#response_ident {
@@ -577,7 +578,7 @@ fn generate_update_impl(
         use sea_orm::IntoActiveModel;
 
         // Find existing entity
-        let model = #entity_module::Entity::find_by_id(request.id)
+        let model = entities::#entity_module::Entity::find_by_id(request.id)
             .one(&self.db)
             .await
             .map_err(StorageError::Database)?
@@ -601,7 +602,7 @@ fn generate_delete_impl(
     response_ident: &proc_macro2::Ident,
 ) -> TokenStream {
     quote! {
-        let result = #entity_module::Entity::delete_by_id(request.id)
+        let result = entities::#entity_module::Entity::delete_by_id(request.id)
             .exec(&self.db)
             .await
             .map_err(StorageError::Database)?;

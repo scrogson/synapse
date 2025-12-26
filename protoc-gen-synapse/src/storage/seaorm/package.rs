@@ -1,12 +1,11 @@
 //! Package module generation
 //!
-//! Generates the package-level mod.rs that wires together all generated code:
+//! Generates the package-level module structure that wires together all generated code:
 //! - tonic-generated gRPC code (via include_proto!)
-//! - SeaORM entities
-//! - Storage traits and implementations
-//! - gRPC services
-//! - GraphQL module
-//! - Conversions
+//! - SeaORM entities (in entities/)
+//! - Storage traits and implementations (in storage/)
+//! - gRPC services (in grpc/)
+//! - GraphQL module (in graphql/)
 
 use super::options::{get_cached_entity_options, get_cached_service_options};
 use crate::error::GeneratorError;
@@ -61,7 +60,42 @@ pub fn collect_package_info_all_files(
     info
 }
 
-/// Generate the package mod.rs file
+/// Generate all package files (main mod.rs and subdirectory mod.rs files)
+pub fn generate_all(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Vec<File>, GeneratorError> {
+    let mut files = Vec::new();
+
+    // Generate main mod.rs
+    if let Some(main_mod) = generate(file, all_files)? {
+        files.push(main_mod);
+    }
+
+    // Generate entities/mod.rs
+    if let Some(entities_mod) = generate_entities_mod(file, all_files)? {
+        files.push(entities_mod);
+    }
+
+    // Generate storage/mod.rs
+    if let Some(storage_mod) = generate_storage_mod(file, all_files)? {
+        files.push(storage_mod);
+    }
+
+    // Generate grpc/mod.rs
+    if let Some(grpc_mod) = generate_grpc_mod(file, all_files)? {
+        files.push(grpc_mod);
+    }
+
+    // Generate storage/conversions.rs
+    if let Some(conversions) = generate_conversions(file, all_files)? {
+        files.push(conversions);
+    }
+
+    Ok(files)
+}
+
+/// Generate the main package mod.rs file
 pub fn generate(
     file: &FileDescriptorProto,
     all_files: &[FileDescriptorProto],
@@ -78,46 +112,29 @@ pub fn generate(
         return Ok(None);
     }
 
-    // Generate module declarations
+    // Generate module declarations for subdirectories
     let mut mod_declarations = Vec::new();
     let mut pub_uses = Vec::new();
 
-    // Entity modules
-    for entity in &info.entities {
-        let mod_name = format_ident!("{}", entity.to_snake_case());
-        mod_declarations.push(quote! { pub mod #mod_name; });
+    // Subdirectory modules
+    if !info.entities.is_empty() {
+        mod_declarations.push(quote! { pub mod entities; });
     }
-
-    // Storage trait modules
-    for svc in &info.services {
-        let trait_mod = format_ident!("{}_storage", svc.to_snake_case());
-        mod_declarations.push(quote! { pub mod #trait_mod; });
+    if !info.services.is_empty() {
+        mod_declarations.push(quote! { pub mod storage; });
+        mod_declarations.push(quote! { pub mod grpc; });
     }
-
-    // Storage implementation modules
-    for svc in &info.services {
-        let impl_mod = format_ident!("sea_orm_{}_storage", svc.to_snake_case());
-        mod_declarations.push(quote! { pub mod #impl_mod; });
-    }
-
-    // gRPC service modules
-    for svc in &info.services {
-        let svc_mod = format_ident!("{}", svc.to_snake_case());
-        mod_declarations.push(quote! { pub mod #svc_mod; });
-    }
-
-    // Conversions module
-    mod_declarations.push(quote! { pub mod conversions; });
 
     // GraphQL module
     mod_declarations.push(quote! { pub mod graphql; });
 
-    // Re-exports for entities
+    // Re-exports for entities (from entities module)
     for entity in &info.entities {
-        let mod_name = format_ident!("{}", entity.to_snake_case());
-        let model_alias = format_ident!("{}Model", entity.to_upper_camel_case());
+        let entity_camel = entity.to_upper_camel_case();
+        let model_alias = format_ident!("{}Model", entity_camel);
+        let entity_mod = format_ident!("{}", entity.to_snake_case());
         pub_uses.push(quote! {
-            pub use #mod_name::Model as #model_alias;
+            pub use entities::#entity_mod::Model as #model_alias;
         });
     }
 
@@ -127,13 +144,10 @@ pub fn generate(
         let trait_name = format_ident!("{}Storage", svc_camel);
         let impl_name = format_ident!("SeaOrm{}Storage", svc_camel);
         let grpc_name = format_ident!("{}GrpcService", svc_camel);
-        let trait_mod = format_ident!("{}_storage", svc.to_snake_case());
-        let impl_mod = format_ident!("sea_orm_{}_storage", svc.to_snake_case());
-        let grpc_mod = format_ident!("{}", svc.to_snake_case());
 
-        pub_uses.push(quote! { pub use #trait_mod::#trait_name; });
-        pub_uses.push(quote! { pub use #impl_mod::#impl_name; });
-        pub_uses.push(quote! { pub use #grpc_mod::#grpc_name; });
+        pub_uses.push(quote! { pub use storage::#trait_name; });
+        pub_uses.push(quote! { pub use storage::#impl_name; });
+        pub_uses.push(quote! { pub use grpc::#grpc_name; });
     }
 
     let code = quote! {
@@ -194,7 +208,214 @@ pub fn generate(
     }))
 }
 
-/// Generate the conversions.rs file with all From implementations
+/// Generate the entities/mod.rs file
+pub fn generate_entities_mod(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    let package = file.package.as_deref().unwrap_or("");
+    if package.is_empty() {
+        return Ok(None);
+    }
+
+    let info = collect_package_info_all_files(all_files, file);
+
+    if info.entities.is_empty() {
+        return Ok(None);
+    }
+
+    // Generate module declarations for entities
+    let mod_declarations: Vec<_> = info
+        .entities
+        .iter()
+        .map(|entity| {
+            let mod_name = format_ident!("{}", entity.to_snake_case());
+            quote! { pub mod #mod_name; }
+        })
+        .collect();
+
+    // Re-export Models with aliases
+    let pub_uses: Vec<_> = info
+        .entities
+        .iter()
+        .map(|entity| {
+            let mod_name = format_ident!("{}", entity.to_snake_case());
+            let model_alias = format_ident!("{}Model", entity.to_upper_camel_case());
+            quote! { pub use #mod_name::Model as #model_alias; }
+        })
+        .collect();
+
+    let code = quote! {
+        //! SeaORM entity definitions
+        //!
+        //! This module is auto-generated by protoc-gen-synapse.
+        //! @generated
+
+        #![allow(missing_docs)]
+        #![allow(unused_imports)]
+
+        #(#mod_declarations)*
+
+        // Re-exports
+        #(#pub_uses)*
+    };
+
+    // Format the generated code
+    let content = code.to_string();
+    let formatted = match syn::parse_file(&content) {
+        Ok(parsed) => prettyplease::unparse(&parsed),
+        Err(_) => content,
+    };
+
+    // Output path
+    let output_path = format!("{}/entities/mod.rs", package.replace('.', "/"));
+
+    Ok(Some(File {
+        name: Some(output_path),
+        content: Some(formatted),
+        ..Default::default()
+    }))
+}
+
+/// Generate the storage/mod.rs file
+pub fn generate_storage_mod(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    let package = file.package.as_deref().unwrap_or("");
+    if package.is_empty() {
+        return Ok(None);
+    }
+
+    let info = collect_package_info_all_files(all_files, file);
+
+    if info.services.is_empty() {
+        return Ok(None);
+    }
+
+    let mut mod_declarations = Vec::new();
+    let mut pub_uses = Vec::new();
+
+    // Storage trait modules - only export StorageError once from the first one
+    let mut storage_error_exported = false;
+    for svc in &info.services {
+        let trait_mod = format_ident!("{}_storage", svc.to_snake_case());
+        mod_declarations.push(quote! { pub mod #trait_mod; });
+
+        let trait_name = format_ident!("{}Storage", svc.to_upper_camel_case());
+        pub_uses.push(quote! { pub use #trait_mod::#trait_name; });
+        if !storage_error_exported {
+            pub_uses.push(quote! { pub use #trait_mod::StorageError; });
+            storage_error_exported = true;
+        }
+    }
+
+    // Storage implementation modules
+    for svc in &info.services {
+        let impl_mod = format_ident!("sea_orm_{}_storage", svc.to_snake_case());
+        mod_declarations.push(quote! { pub mod #impl_mod; });
+
+        let impl_name = format_ident!("SeaOrm{}Storage", svc.to_upper_camel_case());
+        pub_uses.push(quote! { pub use #impl_mod::#impl_name; });
+    }
+
+    // Conversions module
+    mod_declarations.push(quote! { pub mod conversions; });
+    pub_uses.push(quote! { pub use conversions::ApplyUpdate; });
+
+    let code = quote! {
+        //! Storage traits and implementations
+        //!
+        //! This module is auto-generated by protoc-gen-synapse.
+        //! @generated
+
+        #![allow(missing_docs)]
+        #![allow(unused_imports)]
+
+        #(#mod_declarations)*
+
+        // Re-exports
+        #(#pub_uses)*
+    };
+
+    // Format the generated code
+    let content = code.to_string();
+    let formatted = match syn::parse_file(&content) {
+        Ok(parsed) => prettyplease::unparse(&parsed),
+        Err(_) => content,
+    };
+
+    // Output path
+    let output_path = format!("{}/storage/mod.rs", package.replace('.', "/"));
+
+    Ok(Some(File {
+        name: Some(output_path),
+        content: Some(formatted),
+        ..Default::default()
+    }))
+}
+
+/// Generate the grpc/mod.rs file
+pub fn generate_grpc_mod(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    let package = file.package.as_deref().unwrap_or("");
+    if package.is_empty() {
+        return Ok(None);
+    }
+
+    let info = collect_package_info_all_files(all_files, file);
+
+    if info.services.is_empty() {
+        return Ok(None);
+    }
+
+    let mut mod_declarations = Vec::new();
+    let mut pub_uses = Vec::new();
+
+    // gRPC service modules
+    for svc in &info.services {
+        let svc_mod = format_ident!("{}", svc.to_snake_case());
+        mod_declarations.push(quote! { pub mod #svc_mod; });
+
+        let grpc_name = format_ident!("{}GrpcService", svc.to_upper_camel_case());
+        pub_uses.push(quote! { pub use #svc_mod::#grpc_name; });
+    }
+
+    let code = quote! {
+        //! gRPC service implementations
+        //!
+        //! This module is auto-generated by protoc-gen-synapse.
+        //! @generated
+
+        #![allow(missing_docs)]
+        #![allow(unused_imports)]
+
+        #(#mod_declarations)*
+
+        // Re-exports
+        #(#pub_uses)*
+    };
+
+    // Format the generated code
+    let content = code.to_string();
+    let formatted = match syn::parse_file(&content) {
+        Ok(parsed) => prettyplease::unparse(&parsed),
+        Err(_) => content,
+    };
+
+    // Output path
+    let output_path = format!("{}/grpc/mod.rs", package.replace('.', "/"));
+
+    Ok(Some(File {
+        name: Some(output_path),
+        content: Some(formatted),
+        ..Default::default()
+    }))
+}
+
+/// Generate the storage/conversions.rs file with all From implementations
 pub fn generate_conversions(
     file: &FileDescriptorProto,
     all_files: &[FileDescriptorProto],
@@ -231,8 +452,8 @@ pub fn generate_conversions(
 
             conversions.push(quote! {
                 /// Convert SeaORM Model to proto message
-                impl From<#entity_mod::Model> for #proto_type {
-                    fn from(model: #entity_mod::Model) -> Self {
+                impl From<super::super::entities::#entity_mod::Model> for #proto_type {
+                    fn from(model: super::super::entities::#entity_mod::Model) -> Self {
                         Self {
                             #(#model_fields)*
                         }
@@ -250,7 +471,7 @@ pub fn generate_conversions(
                 let create_fields = generate_create_fields(create);
                 conversions.push(quote! {
                     /// Convert CreateRequest to SeaORM ActiveModel
-                    impl From<#create_request> for #entity_mod::ActiveModel {
+                    impl From<#create_request> for super::super::entities::#entity_mod::ActiveModel {
                         fn from(request: #create_request) -> Self {
                             use sea_orm::ActiveValue::Set;
                             Self {
@@ -272,7 +493,7 @@ pub fn generate_conversions(
                 let update_fields = generate_update_fields(update, msg);
                 conversions.push(quote! {
                     /// Apply UpdateRequest to SeaORM ActiveModel
-                    impl ApplyUpdate<&#update_request> for #entity_mod::ActiveModel {
+                    impl ApplyUpdate<&#update_request> for super::super::entities::#entity_mod::ActiveModel {
                         fn apply_update(&mut self, request: &#update_request) {
                             use sea_orm::ActiveValue::Set;
                             #(#update_fields)*
@@ -283,16 +504,6 @@ pub fn generate_conversions(
         }
     }
 
-    // Generate entity module imports
-    let entity_imports: Vec<_> = info
-        .entities
-        .iter()
-        .map(|e| {
-            let mod_name = format_ident!("{}", e.to_snake_case());
-            quote! { use super::#mod_name; }
-        })
-        .collect();
-
     let code = quote! {
         //! Conversions between proto types and SeaORM entities
         //!
@@ -302,8 +513,7 @@ pub fn generate_conversions(
         #![allow(missing_docs)]
         #![allow(unused_imports)]
 
-        use super::prelude::*;
-        #(#entity_imports)*
+        use super::super::prelude::*;
 
         /// Extension trait for applying updates to an active model
         pub trait ApplyUpdate<T> {
@@ -320,8 +530,8 @@ pub fn generate_conversions(
         Err(_) => content,
     };
 
-    // Output path
-    let output_path = format!("{}/conversions.rs", package.replace('.', "/"));
+    // Output path (now in storage/ subdirectory)
+    let output_path = format!("{}/storage/conversions.rs", package.replace('.', "/"));
 
     Ok(Some(File {
         name: Some(output_path),

@@ -49,10 +49,10 @@ pub fn generate(
         grpc_options.storage_trait.clone()
     };
 
-    // Generate the output filename (based on service name, not struct name)
+    // Generate the output filename (in grpc/ subdirectory)
     let module_name = service_name.to_snake_case();
     let output_filename = format!(
-        "{}/{}.rs",
+        "{}/grpc/{}.rs",
         file.package.as_deref().unwrap_or("").replace('.', "/"),
         module_name
     );
@@ -93,8 +93,8 @@ pub fn generate(
         #![allow(missing_docs)]
         #![allow(unused_imports)]
 
-        use super::prelude::*;
-        use super::#storage_trait_module_ident::{#storage_trait_ident, StorageError};
+        use super::super::prelude::*;
+        use super::super::storage::#storage_trait_module_ident::{#storage_trait_ident, StorageError};
         use tonic::{Request, Response, Status};
 
         #error_types

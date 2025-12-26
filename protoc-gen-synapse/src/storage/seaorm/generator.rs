@@ -131,13 +131,8 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             }
         }
 
-        // Generate package mod.rs
-        if let Some(generated) = package::generate(file_descriptor, &request.proto_file)? {
-            files.push(generated);
-        }
-
-        // Generate conversions.rs
-        if let Some(generated) = package::generate_conversions(file_descriptor, &request.proto_file)? {
+        // Generate package mod.rs and subdirectory mod.rs files
+        for generated in package::generate_all(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
     }

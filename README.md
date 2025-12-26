@@ -418,10 +418,11 @@ your-project/
 ├── src/
 │   ├── generated/               # Generated Rust code
 │   │   └── blog/
-│   │       ├── mod.rs           # Proto types + gRPC
-│   │       ├── entities/        # SeaORM entities
-│   │       ├── storage/         # Storage traits + implementations
-│   │       └── graphql/         # GraphQL types + resolvers
+│   │       ├── mod.rs           # Proto types + gRPC (tonic)
+│   │       ├── entities/        # SeaORM entity models
+│   │       ├── storage/         # Storage traits + SeaORM implementations
+│   │       ├── grpc/            # gRPC service implementations
+│   │       └── graphql/         # GraphQL types, resolvers, DataLoaders
 │   └── main.rs
 ├── build.rs
 └── Cargo.toml
