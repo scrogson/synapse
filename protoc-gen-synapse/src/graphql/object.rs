@@ -163,7 +163,7 @@ fn generate_input_type(
     // Check if this type is one of the primitive filter types (to avoid self-import)
     let is_primitive_filter = matches!(
         type_name.as_str(),
-        "Int64Filter" | "Int32Filter" | "StringFilter" | "BoolFilter" | "FloatFilter" | "DoubleFilter"
+        "IntFilter" | "Int64Filter" | "Int32Filter" | "StringFilter" | "BoolFilter" | "FloatFilter" | "DoubleFilter"
     );
 
     // Only import filter types if this isn't itself a primitive filter type
@@ -173,7 +173,7 @@ fn generate_input_type(
         quote! {
             // Import common types from graphql module
             #[allow(unused_imports)]
-            use super::{Int64Filter, StringFilter, BoolFilter, OrderDirection};
+            use super::{IntFilter, StringFilter, BoolFilter, OrderDirection};
         }
     };
 
@@ -659,7 +659,7 @@ fn generate_single_relation_resolver(
             let list_request = format_ident!("List{}sRequest", related_type.to_upper_camel_case());
             let connection_type = format_ident!("{}Connection", related_type.to_upper_camel_case());
             let filter_type = format_ident!("{}Filter", related_type.to_upper_camel_case());
-            let int_filter = format_ident!("Int64Filter");
+            let int_filter = format_ident!("IntFilter");
 
             // Generate storage trait name for import
             let storage_trait = format_ident!("{}Storage", related_service);

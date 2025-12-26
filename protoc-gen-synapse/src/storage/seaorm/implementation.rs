@@ -389,8 +389,8 @@ fn generate_filter_code(
 
         // Determine the filter type from the field's type_name
         let type_name = field.type_name.as_ref()?;
-        let filter_kind = if type_name.contains("Int64Filter") {
-            FilterKind::Int64
+        let filter_kind = if type_name.contains("IntFilter") || type_name.contains("Int64Filter") || type_name.contains("Int32Filter") {
+            FilterKind::Int
         } else if type_name.contains("StringFilter") {
             FilterKind::String
         } else if type_name.contains("BoolFilter") {
@@ -424,7 +424,7 @@ fn generate_filter_code(
 
 /// Filter kind for code generation
 enum FilterKind {
-    Int64,
+    Int,
     String,
     Bool,
 }
@@ -437,7 +437,7 @@ fn generate_field_filter_code(
     filter_kind: FilterKind,
 ) -> TokenStream {
     match filter_kind {
-        FilterKind::Int64 => {
+        FilterKind::Int => {
             quote! {
                 if let Some(ref f) = filter.#field_ident {
                     if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }

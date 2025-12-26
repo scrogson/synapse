@@ -188,8 +188,8 @@ message BoolFilter {
   optional bool eq = 1;
 }
 
-// Int64 comparison operators
-message Int64Filter {
+// Integer comparison operators
+message IntFilter {
   option (synapse.graphql.message) = { input_type: true };
 
   optional int64 eq = 1;
@@ -211,7 +211,7 @@ enum OrderDirection {
 message UserFilter {
   option (synapse.graphql.message) = { input_type: true };
 
-  optional Int64Filter id = 1;
+  optional IntFilter id = 1;
   optional StringFilter email = 2;
   optional StringFilter name = 3;
   optional StringFilter bio = 4;
@@ -232,11 +232,11 @@ message UserOrderBy {
 message PostFilter {
   option (synapse.graphql.message) = { input_type: true };
 
-  optional Int64Filter id = 1;
+  optional IntFilter id = 1;
   optional StringFilter title = 2;
   optional StringFilter content = 3;
   optional BoolFilter published = 4;
-  optional Int64Filter author_id = 5;
+  optional IntFilter author_id = 5;
 }
 
 // Post order by

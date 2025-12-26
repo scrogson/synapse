@@ -4,6 +4,7 @@ target/
 
 # Generated code
 protoc-gen-synapse/gen/
+examples/*/src/generated/
 
 # IDE
 .idea/
