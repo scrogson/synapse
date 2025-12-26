@@ -3,7 +3,7 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, enum_gen, implementation, options};
+use super::{entity, enum_gen, implementation, options, package};
 use crate::error::GeneratorError;
 use crate::{graphql, grpc, validate};
 use prost::Message;
@@ -49,6 +49,11 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             files.push(generated);
         }
 
+        // Generate unified GraphQL schema (mod.rs with Query/Mutation/schema builder)
+        if let Some(generated) = graphql::generate_schema(file_descriptor)? {
+            files.push(generated);
+        }
+
         // Process each enum in the file
         for enum_desc in &file_descriptor.enum_type {
             if let Some(generated) = enum_gen::generate(file_descriptor, enum_desc)? {
@@ -74,6 +79,16 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             for generated in graphql::generate_service(file_descriptor, svc)? {
                 files.push(generated);
             }
+        }
+
+        // Generate package mod.rs
+        if let Some(generated) = package::generate(file_descriptor)? {
+            files.push(generated);
+        }
+
+        // Generate conversions.rs
+        if let Some(generated) = package::generate_conversions(file_descriptor)? {
+            files.push(generated);
         }
     }
 
