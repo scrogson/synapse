@@ -11,7 +11,7 @@ use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use prost_types::compiler::code_generator_response::File;
-use prost_types::{FileDescriptorProto, MethodDescriptorProto, ServiceDescriptorProto};
+use prost_types::{DescriptorProto, FileDescriptorProto, MethodDescriptorProto, ServiceDescriptorProto};
 use quote::{format_ident, quote};
 
 /// Generate a SeaORM-based storage implementation from a protobuf service
@@ -209,7 +209,7 @@ fn generate_method_impl(
             generate_get_impl(&entity_module, &response_ident, entity_options.as_ref())
         }
         "list" | "List" | "LIST" => {
-            generate_list_impl(&entity_module, &response_ident, entity_options.as_ref())
+            generate_list_impl(file, &request_type, &entity_module, &response_ident)
         }
         "create" | "Create" | "CREATE" => {
             generate_create_impl(&entity_module, &response_ident, entity_options.as_ref())
@@ -260,25 +260,54 @@ fn generate_get_impl(
     }
 }
 
-/// Generate a LIST implementation
+/// Generate a LIST implementation with filter/orderBy support
 fn generate_list_impl(
+    file: &FileDescriptorProto,
+    request_type: &str,
     entity_module: &proc_macro2::Ident,
     response_ident: &proc_macro2::Ident,
-    _entity_options: Option<&storage::EntityOptions>,
 ) -> TokenStream {
     // Derive the edge type name (e.g., user -> UserEdge)
     let entity_type = entity_module.to_string().to_upper_camel_case();
     let edge_ident = format_ident!("{}Edge", entity_type);
 
+    // Find the request message to get filter/order_by field types
+    let request_msg = file
+        .message_type
+        .iter()
+        .find(|m| m.name.as_deref() == Some(request_type));
+
+    // Generate filter code if request has a filter field
+    let filter_code = request_msg
+        .and_then(|msg| generate_filter_code(file, msg, entity_module))
+        .unwrap_or_else(|| quote! {});
+
+    // Generate orderBy code if request has an order_by field
+    let order_by_code = request_msg
+        .and_then(|msg| generate_order_by_code(file, msg, entity_module))
+        .unwrap_or_else(|| quote! {
+            // Default ordering by id
+            query = query.order_by_asc(#entity_module::Column::Id);
+        });
+
     quote! {
-        use sea_orm::QuerySelect;
+        use sea_orm::{QuerySelect, Condition};
 
         // Default limit
         let limit = request.first.or(request.last).unwrap_or(20) as u64;
 
-        // Build query with cursor-based pagination
-        let mut query = #entity_module::Entity::find()
-            .order_by_asc(#entity_module::Column::Id);
+        // Build base query
+        let mut query = #entity_module::Entity::find();
+
+        // Apply filters
+        #filter_code
+
+        // Apply ordering
+        let mut ordered = false;
+        #order_by_code
+        if !ordered {
+            query = query.order_by_asc(#entity_module::Column::Id);
+        }
 
         // Apply cursor filter (after = id to start after)
         if let Some(ref after) = request.after {
@@ -328,6 +357,169 @@ fn generate_list_impl(
             }),
         })
     }
+}
+
+/// Generate filter condition code from request message
+fn generate_filter_code(
+    file: &FileDescriptorProto,
+    request_msg: &DescriptorProto,
+    entity_module: &proc_macro2::Ident,
+) -> Option<TokenStream> {
+    // Find the filter field in the request
+    let filter_field = request_msg.field.iter().find(|f| {
+        f.name.as_deref() == Some("filter")
+    })?;
+
+    // Get the filter message type name
+    let filter_type_name = filter_field.type_name.as_ref()?;
+    let filter_type = filter_type_name.rsplit('.').next()?;
+
+    // Find the filter message definition
+    let filter_msg = file.message_type.iter().find(|m| {
+        m.name.as_deref() == Some(filter_type)
+    })?;
+
+    // Generate condition code for each field in the filter
+    let mut field_conditions = Vec::new();
+
+    for field in &filter_msg.field {
+        let field_name = field.name.as_deref()?;
+        let field_ident = format_ident!("{}", field_name);
+        let column_ident = format_ident!("{}", field_name.to_upper_camel_case());
+
+        // Determine the filter type from the field's type_name
+        let type_name = field.type_name.as_ref()?;
+        let filter_kind = if type_name.contains("Int64Filter") {
+            FilterKind::Int64
+        } else if type_name.contains("StringFilter") {
+            FilterKind::String
+        } else if type_name.contains("BoolFilter") {
+            FilterKind::Bool
+        } else {
+            continue; // Unknown filter type, skip
+        };
+
+        let condition_code = generate_field_filter_code(
+            entity_module,
+            &field_ident,
+            &column_ident,
+            filter_kind,
+        );
+
+        field_conditions.push(condition_code);
+    }
+
+    if field_conditions.is_empty() {
+        return None;
+    }
+
+    Some(quote! {
+        if let Some(ref filter) = request.filter {
+            let mut cond = Condition::all();
+            #(#field_conditions)*
+            query = query.filter(cond);
+        }
+    })
+}
+
+/// Filter kind for code generation
+enum FilterKind {
+    Int64,
+    String,
+    Bool,
+}
+
+/// Generate filter condition code for a single field
+fn generate_field_filter_code(
+    entity_module: &proc_macro2::Ident,
+    field_ident: &proc_macro2::Ident,
+    column_ident: &proc_macro2::Ident,
+    filter_kind: FilterKind,
+) -> TokenStream {
+    match filter_kind {
+        FilterKind::Int64 => {
+            quote! {
+                if let Some(ref f) = filter.#field_ident {
+                    if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }
+                    if let Some(v) = f.ne { cond = cond.add(#entity_module::Column::#column_ident.ne(v)); }
+                    if let Some(v) = f.gt { cond = cond.add(#entity_module::Column::#column_ident.gt(v)); }
+                    if let Some(v) = f.gte { cond = cond.add(#entity_module::Column::#column_ident.gte(v)); }
+                    if let Some(v) = f.lt { cond = cond.add(#entity_module::Column::#column_ident.lt(v)); }
+                    if let Some(v) = f.lte { cond = cond.add(#entity_module::Column::#column_ident.lte(v)); }
+                    if !f.r#in.is_empty() { cond = cond.add(#entity_module::Column::#column_ident.is_in(f.r#in.clone())); }
+                }
+            }
+        }
+        FilterKind::String => {
+            quote! {
+                if let Some(ref f) = filter.#field_ident {
+                    if let Some(ref v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v.clone())); }
+                    if let Some(ref v) = f.ne { cond = cond.add(#entity_module::Column::#column_ident.ne(v.clone())); }
+                    if let Some(ref v) = f.contains { cond = cond.add(#entity_module::Column::#column_ident.contains(v)); }
+                    if let Some(ref v) = f.starts_with { cond = cond.add(#entity_module::Column::#column_ident.starts_with(v)); }
+                    if let Some(ref v) = f.ends_with { cond = cond.add(#entity_module::Column::#column_ident.ends_with(v)); }
+                }
+            }
+        }
+        FilterKind::Bool => {
+            quote! {
+                if let Some(ref f) = filter.#field_ident {
+                    if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }
+                }
+            }
+        }
+    }
+}
+
+/// Generate orderBy code from request message
+fn generate_order_by_code(
+    file: &FileDescriptorProto,
+    request_msg: &DescriptorProto,
+    entity_module: &proc_macro2::Ident,
+) -> Option<TokenStream> {
+    // Find the order_by field in the request
+    let order_by_field = request_msg.field.iter().find(|f| {
+        f.name.as_deref() == Some("order_by")
+    })?;
+
+    // Get the orderBy message type name
+    let order_by_type_name = order_by_field.type_name.as_ref()?;
+    let order_by_type = order_by_type_name.rsplit('.').next()?;
+
+    // Find the orderBy message definition
+    let order_by_msg = file.message_type.iter().find(|m| {
+        m.name.as_deref() == Some(order_by_type)
+    })?;
+
+    // Generate ordering code for each field
+    let mut order_statements = Vec::new();
+
+    for field in &order_by_msg.field {
+        let field_name = field.name.as_deref()?;
+        let field_ident = format_ident!("{}", field_name);
+        let column_ident = format_ident!("{}", field_name.to_upper_camel_case());
+
+        order_statements.push(quote! {
+            if let Some(d) = o.#field_ident {
+                ordered = true;
+                query = if d == 1 {
+                    query.order_by_asc(#entity_module::Column::#column_ident)
+                } else {
+                    query.order_by_desc(#entity_module::Column::#column_ident)
+                };
+            }
+        });
+    }
+
+    if order_statements.is_empty() {
+        return None;
+    }
+
+    Some(quote! {
+        if let Some(ref o) = request.order_by {
+            #(#order_statements)*
+        }
+    })
 }
 
 /// Generate a CREATE implementation
