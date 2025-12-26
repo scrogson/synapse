@@ -22,17 +22,10 @@ pub struct FilterContext {
     pub needs_float_filter: bool,
 }
 
-/// Check if a message type exists in the file
-fn message_exists(file: &FileDescriptorProto, name: &str) -> bool {
-    file.message_type
-        .iter()
-        .any(|m| m.name.as_deref() == Some(name))
-}
-
 /// Generate all filter-related types for a package
 ///
-/// Only generates types that are NOT already defined in proto.
-/// Proto-defined types are handled by object.rs which generates proper GraphQL wrappers.
+/// Always generates GraphQL wrapper types with From impls to convert to/from proto types.
+/// Proto types are needed for gRPC/prost, GraphQL wrappers are needed for async-graphql.
 pub fn generate_filters_for_package(
     file: &FileDescriptorProto,
     entities: &[&DescriptorProto],
@@ -45,35 +38,28 @@ pub fn generate_filters_for_package(
         analyze_entity_fields(entity, &mut ctx);
     }
 
-    // Generate primitive filter types only if not defined in proto
-    if ctx.needs_int_filter && !message_exists(file, "IntFilter") {
+    // Generate primitive filter types (GraphQL wrappers for proto types)
+    if ctx.needs_int_filter {
         files.push(generate_int_filter(file)?);
     }
-    if ctx.needs_string_filter && !message_exists(file, "StringFilter") {
+    if ctx.needs_string_filter {
         files.push(generate_string_filter(file)?);
     }
-    if ctx.needs_bool_filter && !message_exists(file, "BoolFilter") {
+    if ctx.needs_bool_filter {
         files.push(generate_bool_filter(file)?);
     }
-    if ctx.needs_float_filter && !message_exists(file, "FloatFilter") {
+    if ctx.needs_float_filter {
         files.push(generate_float_filter(file)?);
     }
 
-    // Always generate OrderDirection enum (proto enums need GraphQL wrappers)
+    // Always generate OrderDirection enum (GraphQL wrapper for proto enum)
     files.push(generate_order_direction(file)?);
 
-    // Generate entity-specific filter and orderBy types only if not defined in proto
+    // Generate entity-specific filter and orderBy types (GraphQL wrappers)
     for entity in entities {
         let entity_name = entity.name.as_deref().unwrap_or("");
-        let filter_name = format!("{}Filter", entity_name.to_upper_camel_case());
-        let order_by_name = format!("{}OrderBy", entity_name.to_upper_camel_case());
-
-        if !message_exists(file, &filter_name) {
-            files.push(generate_entity_filter(file, entity, entity_name)?);
-        }
-        if !message_exists(file, &order_by_name) {
-            files.push(generate_entity_order_by(file, entity, entity_name)?);
-        }
+        files.push(generate_entity_filter(file, entity, entity_name)?);
+        files.push(generate_entity_order_by(file, entity, entity_name)?);
     }
 
     Ok(files)
@@ -358,6 +344,8 @@ fn generate_order_direction(file: &FileDescriptorProto) -> Result<File, Generato
 }
 
 /// Generate entity-specific filter type (e.g., UserFilter)
+///
+/// If proto defines a Filter type, uses its fields. Otherwise uses entity fields.
 fn generate_entity_filter(
     file: &FileDescriptorProto,
     entity: &DescriptorProto,
@@ -369,34 +357,61 @@ fn generate_entity_filter(
     let mut field_tokens = Vec::new();
     let mut conversion_tokens = Vec::new();
 
-    for field in &entity.field {
+    // Check if proto defines this Filter type
+    let proto_filter = file
+        .message_type
+        .iter()
+        .find(|m| m.name.as_deref() == Some(&filter_name));
+
+    // Use proto fields if defined, otherwise derive from entity fields
+    let fields_to_use: Vec<_> = if let Some(proto_f) = proto_filter {
+        proto_f.field.iter().collect()
+    } else {
+        entity.field.iter().collect()
+    };
+
+    for field in fields_to_use {
         let field_name = field.name.as_deref().unwrap_or("");
         let field_ident = format_ident!("{}", field_name.to_snake_case());
 
-        // Skip timestamp fields and relation fields for now
-        if let Some(type_name) = &field.type_name {
-            if type_name.contains("Timestamp") {
-                continue;
+        // Skip timestamp fields when using entity fields
+        if proto_filter.is_none() {
+            if let Some(type_name) = &field.type_name {
+                if type_name.contains("Timestamp") {
+                    continue;
+                }
             }
         }
 
         // Determine filter type based on field type
-        let filter_type = match field.r#type() {
-            Type::Int64 | Type::Int32 | Type::Uint64 | Type::Uint32
-            | Type::Sint32 | Type::Sint64 | Type::Fixed32 | Type::Fixed64
-            | Type::Sfixed32 | Type::Sfixed64 => {
-                Some(quote! { IntFilter })
+        // For proto Filter, fields reference filter types (IntFilter, StringFilter, etc.)
+        // For entity fields, derive from the primitive type
+        let filter_type = if proto_filter.is_some() {
+            // Proto Filter field - get the referenced type name
+            field.type_name.as_ref().and_then(|type_name| {
+                let simple_name = type_name.rsplit('.').next().unwrap_or(type_name);
+                let type_ident = format_ident!("{}", simple_name);
+                Some(quote! { #type_ident })
+            })
+        } else {
+            // Entity field - derive filter type from primitive type
+            match field.r#type() {
+                Type::Int64 | Type::Int32 | Type::Uint64 | Type::Uint32
+                | Type::Sint32 | Type::Sint64 | Type::Fixed32 | Type::Fixed64
+                | Type::Sfixed32 | Type::Sfixed64 => {
+                    Some(quote! { IntFilter })
+                }
+                Type::String => {
+                    Some(quote! { StringFilter })
+                }
+                Type::Bool => {
+                    Some(quote! { BoolFilter })
+                }
+                Type::Float | Type::Double => {
+                    Some(quote! { FloatFilter })
+                }
+                _ => None,
             }
-            Type::String => {
-                Some(quote! { StringFilter })
-            }
-            Type::Bool => {
-                Some(quote! { BoolFilter })
-            }
-            Type::Float | Type::Double => {
-                Some(quote! { FloatFilter })
-            }
-            _ => None,
         };
 
         if let Some(filter_ty) = filter_type {
@@ -453,6 +468,8 @@ fn generate_entity_filter(
 }
 
 /// Generate entity-specific order by type (e.g., UserOrderBy)
+///
+/// If proto defines an OrderBy type, uses its fields. Otherwise uses entity fields.
 fn generate_entity_order_by(
     file: &FileDescriptorProto,
     entity: &DescriptorProto,
@@ -464,23 +481,41 @@ fn generate_entity_order_by(
     let mut field_tokens = Vec::new();
     let mut conversion_tokens = Vec::new();
 
-    for field in &entity.field {
+    // Check if proto defines this OrderBy type
+    let proto_order_by = file
+        .message_type
+        .iter()
+        .find(|m| m.name.as_deref() == Some(&order_by_name));
+
+    // Use proto fields if defined, otherwise derive from entity fields
+    let fields_to_use: Vec<_> = if let Some(proto_ob) = proto_order_by {
+        proto_ob.field.iter().collect()
+    } else {
+        entity.field.iter().collect()
+    };
+
+    for field in fields_to_use {
         let field_name = field.name.as_deref().unwrap_or("");
         let field_ident = format_ident!("{}", field_name.to_snake_case());
 
-        // Include sortable fields (primitives and timestamps)
-        let is_sortable = match field.r#type() {
-            Type::Int64 | Type::Int32 | Type::Uint64 | Type::Uint32
-            | Type::Sint32 | Type::Sint64 | Type::Fixed32 | Type::Fixed64
-            | Type::Sfixed32 | Type::Sfixed64 | Type::String | Type::Bool
-            | Type::Float | Type::Double => true,
-            Type::Message => {
-                // Include Timestamp fields
-                field.type_name.as_ref()
-                    .map(|t| t.contains("Timestamp"))
-                    .unwrap_or(false)
+        // If using proto OrderBy, all fields are sortable (they're in the proto)
+        // If using entity, include sortable fields (primitives and timestamps)
+        let is_sortable = if proto_order_by.is_some() {
+            true // Proto-defined fields are explicitly sortable
+        } else {
+            match field.r#type() {
+                Type::Int64 | Type::Int32 | Type::Uint64 | Type::Uint32
+                | Type::Sint32 | Type::Sint64 | Type::Fixed32 | Type::Fixed64
+                | Type::Sfixed32 | Type::Sfixed64 | Type::String | Type::Bool
+                | Type::Float | Type::Double => true,
+                Type::Message => {
+                    // Include Timestamp fields
+                    field.type_name.as_ref()
+                        .map(|t| t.contains("Timestamp"))
+                        .unwrap_or(false)
+                }
+                _ => false,
             }
-            _ => false,
         };
 
         if is_sortable {

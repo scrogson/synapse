@@ -8,17 +8,6 @@ import "synapse/grpc/options.proto";
 import "synapse/storage/options.proto";
 
 // =============================================================================
-// Relay Pagination Types (inline for now)
-// =============================================================================
-
-message PageInfo {
-  bool has_next_page = 1;
-  bool has_previous_page = 2;
-  optional string start_cursor = 3;
-  optional string end_cursor = 4;
-}
-
-// =============================================================================
 // Entities
 // =============================================================================
 
@@ -129,69 +118,22 @@ message UpdatePostInput {
 }
 
 // =============================================================================
-// Connections (Relay)
+// Filter & OrderBy Types (proto definitions - GraphQL wrappers auto-generated)
 // =============================================================================
 
-message UserEdge {
-  option (synapse.storage.connection_type) = { edge: true };
-
-  string cursor = 1;
-  User node = 2;
-}
-
-message UserConnection {
-  option (synapse.storage.connection_type) = {
-    connection: true
-    node_type: "User"
-  };
-
-  repeated UserEdge edges = 1;
-  PageInfo page_info = 2;
-}
-
-message PostEdge {
-  option (synapse.storage.connection_type) = { edge: true };
-
-  string cursor = 1;
-  Post node = 2;
-}
-
-message PostConnection {
-  option (synapse.storage.connection_type) = {
-    connection: true
-    node_type: "Post"
-  };
-
-  repeated PostEdge edges = 1;
-  PageInfo page_info = 2;
-}
-
-// =============================================================================
-// Filter & OrderBy Types
-// =============================================================================
-
-// String comparison operators
 message StringFilter {
-  option (synapse.graphql.message) = { input_type: true };
-
-  optional string eq = 1;        // equals
-  optional string ne = 2;        // not equals
-  optional string contains = 3;  // contains substring
+  optional string eq = 1;
+  optional string ne = 2;
+  optional string contains = 3;
   optional string starts_with = 4;
   optional string ends_with = 5;
 }
 
-// Boolean comparison
 message BoolFilter {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional bool eq = 1;
 }
 
-// Integer comparison operators
 message IntFilter {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional int64 eq = 1;
   optional int64 ne = 2;
   optional int64 gt = 3;
@@ -207,20 +149,14 @@ enum OrderDirection {
   DESC = 2;
 }
 
-// User filter
 message UserFilter {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional IntFilter id = 1;
   optional StringFilter email = 2;
   optional StringFilter name = 3;
   optional StringFilter bio = 4;
 }
 
-// User order by
 message UserOrderBy {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional OrderDirection id = 1;
   optional OrderDirection email = 2;
   optional OrderDirection name = 3;
@@ -228,10 +164,7 @@ message UserOrderBy {
   optional OrderDirection updated_at = 5;
 }
 
-// Post filter
 message PostFilter {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional IntFilter id = 1;
   optional StringFilter title = 2;
   optional StringFilter content = 3;
@@ -239,15 +172,43 @@ message PostFilter {
   optional IntFilter author_id = 5;
 }
 
-// Post order by
 message PostOrderBy {
-  option (synapse.graphql.message) = { input_type: true };
-
   optional OrderDirection id = 1;
   optional OrderDirection title = 2;
   optional OrderDirection published = 3;
   optional OrderDirection created_at = 4;
   optional OrderDirection updated_at = 5;
+}
+
+// =============================================================================
+// Connection Types (proto definitions - GraphQL wrappers auto-generated)
+// =============================================================================
+
+message PageInfo {
+  bool has_next_page = 1;
+  bool has_previous_page = 2;
+  optional string start_cursor = 3;
+  optional string end_cursor = 4;
+}
+
+message UserEdge {
+  string cursor = 1;
+  User node = 2;
+}
+
+message UserConnection {
+  repeated UserEdge edges = 1;
+  PageInfo page_info = 2;
+}
+
+message PostEdge {
+  string cursor = 1;
+  Post node = 2;
+}
+
+message PostConnection {
+  repeated PostEdge edges = 1;
+  PageInfo page_info = 2;
 }
 
 // =============================================================================

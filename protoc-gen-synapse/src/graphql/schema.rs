@@ -13,13 +13,6 @@ use prost_types::compiler::code_generator_response::File;
 use prost_types::FileDescriptorProto;
 use quote::{format_ident, quote};
 
-/// Check if a message type exists in the file
-fn message_exists(file: &FileDescriptorProto, name: &str) -> bool {
-    file.message_type
-        .iter()
-        .any(|m| m.name.as_deref() == Some(name))
-}
-
 /// Collect information about all generated types for the schema
 pub struct SchemaInfo {
     /// Entity types (message name -> snake_case module name)
@@ -93,60 +86,44 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
     let mut mod_declarations = Vec::new();
     let mut pub_uses = Vec::new();
 
-    // Primitive filter modules - auto-generate if not in proto, otherwise object.rs generates wrapper
+    // Primitive filter modules (GraphQL wrappers - always generated)
     if info.has_auto_filters {
-        // IntFilter
-        if !message_exists(file, "IntFilter") {
-            mod_declarations.push(quote! { mod int_filter; });
-            pub_uses.push(quote! { pub use int_filter::IntFilter; });
-        }
-        // StringFilter
-        if !message_exists(file, "StringFilter") {
-            mod_declarations.push(quote! { mod string_filter; });
-            pub_uses.push(quote! { pub use string_filter::StringFilter; });
-        }
-        // BoolFilter
-        if !message_exists(file, "BoolFilter") {
-            mod_declarations.push(quote! { mod bool_filter; });
-            pub_uses.push(quote! { pub use bool_filter::BoolFilter; });
-        }
-        // OrderDirection (always auto-generated)
+        mod_declarations.push(quote! { mod int_filter; });
+        pub_uses.push(quote! { pub use int_filter::IntFilter; });
+        mod_declarations.push(quote! { mod string_filter; });
+        pub_uses.push(quote! { pub use string_filter::StringFilter; });
+        mod_declarations.push(quote! { mod bool_filter; });
+        pub_uses.push(quote! { pub use bool_filter::BoolFilter; });
         mod_declarations.push(quote! { mod order_direction; });
         pub_uses.push(quote! { pub use order_direction::OrderDirection; });
-        // PageInfo (always auto-generated)
         mod_declarations.push(quote! { mod page_info; });
         pub_uses.push(quote! { pub use page_info::PageInfo; });
     }
 
-    // Entity modules and their auto-generated types
+    // Entity modules and their auto-generated types (GraphQL wrappers)
     for (name, snake) in &info.entities {
         let mod_name = format_ident!("{}", snake);
         let type_name = format_ident!("{}", name);
         mod_declarations.push(quote! { mod #mod_name; });
         pub_uses.push(quote! { pub use #mod_name::#type_name; });
 
-        // Filter, orderBy, edge, connection for this entity
-        // Auto-generate if not in proto, otherwise object.rs generates wrapper
+        // Filter, orderBy, edge, connection for this entity (always generated)
         let filter_name = format!("{}Filter", name);
         let order_by_name = format!("{}OrderBy", name);
         let edge_name = format!("{}Edge", name);
         let connection_name = format!("{}Connection", name);
 
-        if !message_exists(file, &filter_name) {
-            let filter_mod = format_ident!("{}_filter", snake);
-            let filter_type = format_ident!("{}", filter_name);
-            mod_declarations.push(quote! { mod #filter_mod; });
-            pub_uses.push(quote! { pub use #filter_mod::#filter_type; });
-        }
+        let filter_mod = format_ident!("{}_filter", snake);
+        let filter_type = format_ident!("{}", filter_name);
+        mod_declarations.push(quote! { mod #filter_mod; });
+        pub_uses.push(quote! { pub use #filter_mod::#filter_type; });
 
-        if !message_exists(file, &order_by_name) {
-            let order_by_mod = format_ident!("{}_order_by", snake);
-            let order_by_type = format_ident!("{}", order_by_name);
-            mod_declarations.push(quote! { mod #order_by_mod; });
-            pub_uses.push(quote! { pub use #order_by_mod::#order_by_type; });
-        }
+        let order_by_mod = format_ident!("{}_order_by", snake);
+        let order_by_type = format_ident!("{}", order_by_name);
+        mod_declarations.push(quote! { mod #order_by_mod; });
+        pub_uses.push(quote! { pub use #order_by_mod::#order_by_type; });
 
-        // Edge and Connection (always auto-generated)
+        // Edge and Connection
         let edge_mod = format_ident!("{}_edge", snake);
         let edge_type = format_ident!("{}", edge_name);
         mod_declarations.push(quote! { mod #edge_mod; });
