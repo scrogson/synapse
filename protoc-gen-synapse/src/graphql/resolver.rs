@@ -229,11 +229,11 @@ fn generate_query_resolver_methods(
     for (method, opts) in methods {
         let method_name = method.name.as_deref().unwrap_or("");
 
-        // Determine GraphQL field name
+        // Determine Rust method name (snake_case - async-graphql converts to camelCase automatically)
         let field_name = opts
             .as_ref()
             .filter(|o| !o.name.is_empty())
-            .map(|o| o.name.clone())
+            .map(|o| o.name.to_snake_case())
             .unwrap_or_else(|| method_name.to_snake_case());
         let field_ident = format_ident!("{}", field_name);
 
@@ -361,11 +361,11 @@ fn generate_mutation_resolver_methods(
     for (method, opts) in methods {
         let method_name = method.name.as_deref().unwrap_or("");
 
-        // Determine GraphQL field name
+        // Determine Rust method name (snake_case - async-graphql converts to camelCase automatically)
         let field_name = opts
             .as_ref()
             .filter(|o| !o.name.is_empty())
-            .map(|o| o.name.clone())
+            .map(|o| o.name.to_snake_case())
             .unwrap_or_else(|| method_name.to_snake_case());
         let field_ident = format_ident!("{}", field_name);
 
