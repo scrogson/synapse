@@ -102,6 +102,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             for generated in graphql::generate_service(file_descriptor, svc)? {
                 files.push(generated);
             }
+            // GraphQL input types (auto-generated from request messages)
+            for generated in graphql::generate_inputs(file_descriptor, svc)? {
+                files.push(generated);
+            }
         }
 
         // Generate package mod.rs

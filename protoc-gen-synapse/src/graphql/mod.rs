@@ -13,6 +13,7 @@
 mod connection;
 mod dataloader;
 mod filter;
+mod input;
 mod node;
 mod object;
 mod resolver;
@@ -93,4 +94,16 @@ pub fn generate_connections(
     entities: &[&DescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
     connection::generate_connections_for_package(file, entities)
+}
+
+/// Generate auto-generated input types from mutation request messages
+///
+/// Creates GraphQL InputObject types from request messages:
+/// - CreateUserRequest → CreateUserInput (all fields)
+/// - UpdateUserRequest → UpdateUserInput (all fields except id)
+pub fn generate_inputs(
+    file: &FileDescriptorProto,
+    service: &ServiceDescriptorProto,
+) -> Result<Vec<File>, GeneratorError> {
+    input::generate_inputs_for_service(file, service)
 }

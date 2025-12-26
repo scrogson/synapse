@@ -204,8 +204,8 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
     for entity in &info.entities {
         let entity_mod = format_ident!("{}", entity.to_snake_case());
         let proto_type = format_ident!("{}", entity.to_upper_camel_case());
-        let create_input = format_ident!("Create{}Input", entity.to_upper_camel_case());
-        let update_input = format_ident!("Update{}Input", entity.to_upper_camel_case());
+        let create_request = format_ident!("Create{}Request", entity.to_upper_camel_case());
+        let update_request = format_ident!("Update{}Request", entity.to_upper_camel_case());
 
         // Find the entity message to get its fields
         let message = file.message_type.iter().find(|m| m.name.as_deref() == Some(entity));
@@ -225,18 +225,18 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
                 }
             });
 
-            // Find CreateInput message
+            // Find CreateRequest message (fields are directly on request, not nested)
             let create_msg = file
                 .message_type
                 .iter()
-                .find(|m| m.name.as_deref() == Some(&format!("Create{}Input", entity)));
+                .find(|m| m.name.as_deref() == Some(&format!("Create{}Request", entity)));
 
             if let Some(create) = create_msg {
                 let create_fields = generate_create_fields(create);
                 conversions.push(quote! {
-                    /// Convert CreateInput to SeaORM ActiveModel
-                    impl From<#create_input> for #entity_mod::ActiveModel {
-                        fn from(input: #create_input) -> Self {
+                    /// Convert CreateRequest to SeaORM ActiveModel
+                    impl From<#create_request> for #entity_mod::ActiveModel {
+                        fn from(request: #create_request) -> Self {
                             use sea_orm::ActiveValue::Set;
                             Self {
                                 #(#create_fields)*
@@ -247,18 +247,18 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
                 });
             }
 
-            // Find UpdateInput message
+            // Find UpdateRequest message (fields are directly on request, not nested)
             let update_msg = file
                 .message_type
                 .iter()
-                .find(|m| m.name.as_deref() == Some(&format!("Update{}Input", entity)));
+                .find(|m| m.name.as_deref() == Some(&format!("Update{}Request", entity)));
 
             if let Some(update) = update_msg {
                 let update_fields = generate_update_fields(update, msg);
                 conversions.push(quote! {
-                    /// Apply UpdateInput to SeaORM ActiveModel
-                    impl ApplyUpdate<#update_input> for #entity_mod::ActiveModel {
-                        fn apply_update(&mut self, input: #update_input) {
+                    /// Apply UpdateRequest to SeaORM ActiveModel
+                    impl ApplyUpdate<&#update_request> for #entity_mod::ActiveModel {
+                        fn apply_update(&mut self, request: &#update_request) {
                             use sea_orm::ActiveValue::Set;
                             #(#update_fields)*
                         }
@@ -348,30 +348,23 @@ fn generate_model_to_proto_fields(message: &prost_types::DescriptorProto) -> Vec
     fields
 }
 
-/// Generate field assignments for CreateInput -> ActiveModel conversion
+/// Generate field assignments for CreateRequest -> ActiveModel conversion
 fn generate_create_fields(message: &prost_types::DescriptorProto) -> Vec<TokenStream> {
     let mut fields = Vec::new();
 
     for field in &message.field {
         let field_name = field.name.as_deref().unwrap_or("");
         let rust_field = format_ident!("{}", field_name.to_snake_case());
-        let is_optional = field.proto3_optional.unwrap_or(false);
 
-        if is_optional {
-            fields.push(quote! {
-                #rust_field: Set(input.#rust_field),
-            });
-        } else {
-            fields.push(quote! {
-                #rust_field: Set(input.#rust_field),
-            });
-        }
+        fields.push(quote! {
+            #rust_field: Set(request.#rust_field),
+        });
     }
 
     fields
 }
 
-/// Generate field update assignments for UpdateInput -> ActiveModel
+/// Generate field update assignments for UpdateRequest -> ActiveModel
 fn generate_update_fields(
     update_message: &prost_types::DescriptorProto,
     entity_message: &prost_types::DescriptorProto,
@@ -380,6 +373,12 @@ fn generate_update_fields(
 
     for field in &update_message.field {
         let field_name = field.name.as_deref().unwrap_or("");
+
+        // Skip the id field - it's used to find the entity, not update it
+        if field_name == "id" {
+            continue;
+        }
+
         let rust_field = format_ident!("{}", field_name.to_snake_case());
 
         // Check if the corresponding field in the entity is optional
@@ -395,14 +394,14 @@ fn generate_update_fields(
         // For optional entity fields, wrap value in Some()
         if is_optional_in_entity {
             fields.push(quote! {
-                if let Some(value) = input.#rust_field {
-                    self.#rust_field = Set(Some(value));
+                if let Some(ref value) = request.#rust_field {
+                    self.#rust_field = Set(Some(value.clone()));
                 }
             });
         } else {
             fields.push(quote! {
-                if let Some(value) = input.#rust_field {
-                    self.#rust_field = Set(value);
+                if let Some(ref value) = request.#rust_field {
+                    self.#rust_field = Set(value.clone());
                 }
             });
         }

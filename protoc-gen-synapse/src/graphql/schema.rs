@@ -5,7 +5,8 @@
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_message_options, get_cached_graphql_service_options,
+    get_cached_entity_options, get_cached_graphql_message_options, get_cached_graphql_method_options,
+    get_cached_graphql_service_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
@@ -19,6 +20,8 @@ pub struct SchemaInfo {
     pub entities: Vec<(String, String)>,
     /// Input types (message name -> snake_case module name)
     pub input_types: Vec<(String, String)>,
+    /// Auto-generated input types from request messages (input name -> snake_case module name)
+    pub auto_input_types: Vec<(String, String)>,
     /// Services (service name)
     pub services: Vec<String>,
     /// Whether we have auto-generated filters
@@ -31,6 +34,7 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
     let mut info = SchemaInfo {
         entities: Vec::new(),
         input_types: Vec::new(),
+        auto_input_types: Vec::new(),
         services: Vec::new(),
         has_auto_filters: false,
     };
@@ -68,6 +72,37 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
         }
 
         info.services.push(svc_name.to_string());
+
+        // Collect auto-generated input types from mutation methods
+        for method in &service.method {
+            let method_name = method.name.as_deref().unwrap_or("");
+            let method_opts = get_cached_graphql_method_options(file_name, svc_name, method_name);
+
+            // Skip if not a mutation
+            let operation = method_opts
+                .as_ref()
+                .filter(|o| !o.operation.is_empty())
+                .map(|o| o.operation.as_str())
+                .unwrap_or("Query");
+
+            if operation != "Mutation" {
+                continue;
+            }
+
+            // Check if this is a create or update operation
+            let is_create = method_name.to_lowercase().starts_with("create");
+            let is_update = method_name.to_lowercase().starts_with("update");
+
+            if is_create || is_update {
+                // Derive input type name from request type
+                if let Some(request_type) = &method.input_type {
+                    let request_name = request_type.rsplit('.').next().unwrap_or(request_type);
+                    let input_name = request_name.replace("Request", "Input");
+                    let input_snake = input_name.to_snake_case();
+                    info.auto_input_types.push((input_name, input_snake));
+                }
+            }
+        }
     }
 
     info
@@ -137,6 +172,14 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
 
     // User-defined input type modules
     for (name, snake) in &info.input_types {
+        let mod_name = format_ident!("{}", snake);
+        let type_name = format_ident!("{}", name);
+        mod_declarations.push(quote! { mod #mod_name; });
+        pub_uses.push(quote! { pub use #mod_name::#type_name; });
+    }
+
+    // Auto-generated input types from request messages
+    for (name, snake) in &info.auto_input_types {
         let mod_name = format_ident!("{}", snake);
         let type_name = format_ident!("{}", name);
         mod_declarations.push(quote! { mod #mod_name; });

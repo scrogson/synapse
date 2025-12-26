@@ -529,11 +529,8 @@ fn generate_create_impl(
     _entity_options: Option<&storage::EntityOptions>,
 ) -> TokenStream {
     quote! {
-        let input = request.input.ok_or_else(|| {
-            StorageError::InvalidArgument("input is required".to_string())
-        })?;
-
-        let active_model: #entity_module::ActiveModel = input.into();
+        // Request fields are directly on the request (no nested input)
+        let active_model: #entity_module::ActiveModel = request.into();
         let model = active_model.insert(&self.db).await.map_err(StorageError::Database)?;
 
         Ok(#response_ident {
@@ -554,10 +551,6 @@ fn generate_update_impl(
     quote! {
         use sea_orm::IntoActiveModel;
 
-        let input = request.input.ok_or_else(|| {
-            StorageError::InvalidArgument("input is required".to_string())
-        })?;
-
         // Find existing entity
         let model = #entity_module::Entity::find_by_id(request.id)
             .one(&self.db)
@@ -565,9 +558,9 @@ fn generate_update_impl(
             .map_err(StorageError::Database)?
             .ok_or_else(|| StorageError::NotFound(format!("{} with id {} not found", stringify!(#entity_type), request.id)))?;
 
-        // Convert to active model and apply updates
+        // Convert to active model and apply updates from request
         let mut active_model = model.into_active_model();
-        active_model.apply_update(input);
+        active_model.apply_update(&request);
 
         let model = active_model.update(&self.db).await.map_err(StorageError::Database)?;
 

@@ -392,12 +392,6 @@ fn generate_mutation_resolver_methods(
             })
             .unwrap_or_else(|| format_ident!("()"));
 
-        // Get input type from options
-        let input_type = opts
-            .as_ref()
-            .filter(|o| !o.input_type.is_empty())
-            .map(|o| format_ident!("{}", o.input_type));
-
         // Get output type from options
         let output_type = opts
             .as_ref()
@@ -417,6 +411,12 @@ fn generate_mutation_resolver_methods(
         let is_update = method_name.to_lowercase().starts_with("update");
         let is_delete = method_name.to_lowercase().starts_with("delete");
 
+        // Derive input type name from request type: CreateUserRequest → CreateUserInput
+        let derived_input_type = format_ident!(
+            "{}",
+            request_type.to_string().replace("Request", "Input")
+        );
+
         let resolver = if is_delete {
             // Delete operation - return bool
             quote! {
@@ -434,52 +434,39 @@ fn generate_mutation_resolver_methods(
                 }
             }
         } else if is_create {
-            // Create operation with input
-            if let Some(input) = input_type {
-                quote! {
-                    #description_attr
-                    async fn #field_ident(
-                        &self,
-                        ctx: &Context<'_>,
-                        input: super::#input,
-                    ) -> Result<super::#output_type> {
-                        let storage = ctx.data_unchecked::<Arc<Storage>>();
-                        let request = super::super::#request_type {
-                            input: Some(input.into()),
-                        };
-                        let response = storage.#storage_method(request).await
-                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                        Ok(response.#output_field.map(super::#output_type::from)
-                            .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
-                    }
+            // Create operation - input is auto-generated from request, use From impl
+            quote! {
+                #description_attr
+                async fn #field_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                    input: super::#derived_input_type,
+                ) -> Result<super::#output_type> {
+                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let request: super::super::#request_type = input.into();
+                    let response = storage.#storage_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+                    Ok(response.#output_field.map(super::#output_type::from)
+                        .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
                 }
-            } else {
-                quote! {}
             }
         } else if is_update {
-            // Update operation with id and input
-            if let Some(input) = input_type {
-                quote! {
-                    #description_attr
-                    async fn #field_ident(
-                        &self,
-                        ctx: &Context<'_>,
-                        id: i64,
-                        input: super::#input,
-                    ) -> Result<super::#output_type> {
-                        let storage = ctx.data_unchecked::<Arc<Storage>>();
-                        let request = super::super::#request_type {
-                            id,
-                            input: Some(input.into()),
-                        };
-                        let response = storage.#storage_method(request).await
-                            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                        Ok(response.#output_field.map(super::#output_type::from)
-                            .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
-                    }
+            // Update operation - id is separate, input uses to_request method
+            quote! {
+                #description_attr
+                async fn #field_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                    id: i64,
+                    input: super::#derived_input_type,
+                ) -> Result<super::#output_type> {
+                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let request = input.to_request(id);
+                    let response = storage.#storage_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+                    Ok(response.#output_field.map(super::#output_type::from)
+                        .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
                 }
-            } else {
-                quote! {}
             }
         } else {
             // Generic mutation

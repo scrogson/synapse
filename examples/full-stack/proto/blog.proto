@@ -81,43 +81,6 @@ message Post {
 }
 
 // =============================================================================
-// Input Types
-// =============================================================================
-
-message CreateUserInput {
-  option (synapse.graphql.message) = { input_type: true };
-
-  string email = 1;
-  string name = 2;
-  optional string bio = 3;
-}
-
-message UpdateUserInput {
-  option (synapse.graphql.message) = { input_type: true };
-
-  optional string email = 1;
-  optional string name = 2;
-  optional string bio = 3;
-}
-
-message CreatePostInput {
-  option (synapse.graphql.message) = { input_type: true };
-
-  string title = 1;
-  string content = 2;
-  bool published = 3;
-  int64 author_id = 4;
-}
-
-message UpdatePostInput {
-  option (synapse.graphql.message) = { input_type: true };
-
-  optional string title = 1;
-  optional string content = 2;
-  optional bool published = 3;
-}
-
-// =============================================================================
 // Filter & OrderBy Types (proto definitions - GraphQL wrappers auto-generated)
 // =============================================================================
 
@@ -236,7 +199,9 @@ message ListUsersRequest {
 }
 
 message CreateUserRequest {
-  CreateUserInput input = 1;
+  string email = 1;
+  string name = 2;
+  optional string bio = 3;
 }
 
 message CreateUserResponse {
@@ -245,7 +210,9 @@ message CreateUserResponse {
 
 message UpdateUserRequest {
   int64 id = 1;
-  UpdateUserInput input = 2;
+  optional string email = 2;
+  optional string name = 3;
+  optional string bio = 4;
 }
 
 message UpdateUserResponse {
@@ -281,7 +248,10 @@ message ListPostsRequest {
 }
 
 message CreatePostRequest {
-  CreatePostInput input = 1;
+  string title = 1;
+  string content = 2;
+  bool published = 3;
+  int64 author_id = 4;
 }
 
 message CreatePostResponse {
@@ -290,7 +260,9 @@ message CreatePostResponse {
 
 message UpdatePostRequest {
   int64 id = 1;
-  UpdatePostInput input = 2;
+  optional string title = 2;
+  optional string content = 3;
+  optional bool published = 4;
 }
 
 message UpdatePostResponse {
@@ -342,7 +314,6 @@ service UserService {
       name: "createUser"
       description: "Create a new user"
       operation: "Mutation"
-      input_type: "CreateUserInput"
       output_type: "User"
       output_field: "user"
     };
@@ -400,7 +371,6 @@ service PostService {
       name: "createPost"
       description: "Create a new post"
       operation: "Mutation"
-      input_type: "CreatePostInput"
       output_type: "Post"
       output_field: "post"
     };
