@@ -4,8 +4,9 @@
 //! Handles both output types (#[Object]) and input types (#[InputObject]).
 
 use crate::error::GeneratorError;
+use crate::options::synapse::storage::{RelationDef, RelationType};
 use crate::storage::seaorm::options::{
-    get_cached_graphql_field_options, get_cached_graphql_message_options,
+    get_cached_entity_options, get_cached_graphql_field_options, get_cached_graphql_message_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
@@ -71,6 +72,14 @@ fn generate_object_type(
     let resolver_methods =
         generate_resolver_methods(file_name, msg_name, &message.field, opts.node)?;
 
+    // Generate relation resolver methods from storage options
+    let entity_opts = get_cached_entity_options(file_name, msg_name);
+    let relation_resolvers = if let Some(ref entity) = entity_opts {
+        generate_relation_resolvers(&type_name, &entity.relations)?
+    } else {
+        quote! {}
+    };
+
     // Generate From impl for proto conversion
     let from_impl = generate_from_impl(file, message, &type_name)?;
 
@@ -94,6 +103,7 @@ fn generate_object_type(
         use async_graphql::dataloader::DataLoader;
 
         /// GraphQL object type
+        #[derive(Clone)]
         pub struct #type_ident {
             #struct_fields
         }
@@ -102,6 +112,7 @@ fn generate_object_type(
         impl #type_ident {
             #node_impl
             #resolver_methods
+            #relation_resolvers
         }
 
         #from_impl
@@ -149,6 +160,27 @@ fn generate_input_type(
     // Generate struct fields for input type
     let struct_fields = generate_input_fields(file_name, msg_name, &message.field)?;
 
+    // Check if this type is one of the primitive filter types (to avoid self-import)
+    let is_primitive_filter = matches!(
+        type_name.as_str(),
+        "Int64Filter" | "Int32Filter" | "StringFilter" | "BoolFilter" | "FloatFilter" | "DoubleFilter"
+    );
+
+    // Only import filter types if this isn't itself a primitive filter type
+    let filter_imports = if is_primitive_filter {
+        quote! {}
+    } else {
+        quote! {
+            // Import common types from graphql module
+            #[allow(unused_imports)]
+            use super::{Int64Filter, StringFilter, BoolFilter, OrderDirection};
+        }
+    };
+
+    // Generate From impl to convert GraphQL input to proto message
+    let proto_ident = format_ident!("{}", msg_name);
+    let from_impl = generate_input_from_impl(&type_ident, &proto_ident, &message.field);
+
     let code = quote! {
         //! GraphQL InputObject type for #msg_name
         //! @generated
@@ -157,12 +189,15 @@ fn generate_input_type(
         #![allow(unused_imports)]
 
         use async_graphql::InputObject;
+        #filter_imports
 
         /// GraphQL input object type
-        #[derive(InputObject)]
+        #[derive(InputObject, Default)]
         pub struct #type_ident {
             #struct_fields
         }
+
+        #from_impl
     };
 
     // Format the generated code
@@ -187,32 +222,34 @@ fn generate_input_type(
 }
 
 /// Generate struct fields for an Object type
+/// Note: All fields are included in the struct, even those marked with skip.
+/// The skip option only affects resolver method generation, not struct fields.
+/// This allows relation resolvers to access FK fields that aren't exposed in GraphQL.
 fn generate_struct_fields(
-    file_name: &str,
-    msg_name: &str,
+    _file_name: &str,
+    _msg_name: &str,
     fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
+    use prost_types::field_descriptor_proto::Label;
+
     let mut field_tokens = Vec::new();
 
     for field in fields {
         let field_name = field.name.as_deref().unwrap_or("");
-        let field_number = field.number.unwrap_or(0);
 
-        // Check for graphql field options
-        let field_opts = get_cached_graphql_field_options(file_name, msg_name, field_number);
-
-        // Skip if marked
-        if field_opts.as_ref().is_some_and(|o| o.skip) {
-            continue;
-        }
-
-        let rust_name = format_ident!("{}", field_name.to_snake_case());
+        // Include ALL fields in the struct (skip only affects resolver generation)
+        // Escape Rust keywords
+        let snake_name = field_name.to_snake_case();
+        let rust_name = escape_rust_keyword(&snake_name);
         let rust_type = proto_type_to_rust_type(field);
 
-        // Check if optional
+        // Check if optional or repeated
         let is_optional = field.proto3_optional.unwrap_or(false);
+        let is_repeated = field.label() == Label::Repeated;
 
-        let field_type = if is_optional {
+        let field_type = if is_repeated {
+            quote! { Vec<#rust_type> }
+        } else if is_optional {
             quote! { Option<#rust_type> }
         } else {
             quote! { #rust_type }
@@ -317,13 +354,15 @@ fn generate_node_methods(type_name: &str, id_field: Option<&FieldDescriptorProto
     // Check if this is a UUID type (by type name or field type name convention)
     let is_uuid = field_type_name.to_lowercase().contains("uuid");
 
+    // Use base64url encoding for global IDs (URL-safe, works with any bytes)
     if is_uuid {
         // UUID-based ID - return as string reference
         quote! {
             /// Relay global ID
             async fn id(&self) -> ID {
+                use base64::Engine;
                 let raw = format!("{}:{}", #type_name_str, self.id);
-                ID(base62::encode(raw.as_bytes()))
+                ID(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes()))
             }
 
             /// Internal database ID (UUID)
@@ -336,8 +375,9 @@ fn generate_node_methods(type_name: &str, id_field: Option<&FieldDescriptorProto
         quote! {
             /// Relay global ID
             async fn id(&self) -> ID {
+                use base64::Engine;
                 let raw = format!("{}:{}", #type_name_str, self.id);
-                ID(base62::encode(raw.as_bytes()))
+                ID(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes()))
             }
 
             /// Internal database ID
@@ -350,8 +390,9 @@ fn generate_node_methods(type_name: &str, id_field: Option<&FieldDescriptorProto
         quote! {
             /// Relay global ID
             async fn id(&self) -> ID {
+                use base64::Engine;
                 let raw = format!("{}:{}", #type_name_str, self.id);
-                ID(base62::encode(raw.as_bytes()))
+                ID(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes()))
             }
 
             /// Internal database ID
@@ -363,12 +404,13 @@ fn generate_node_methods(type_name: &str, id_field: Option<&FieldDescriptorProto
 }
 
 /// Generate From impl for proto to GraphQL type conversion
+/// Note: All fields are converted, including those marked with skip.
+/// This allows relation resolvers to access FK fields.
 fn generate_from_impl(
-    file: &FileDescriptorProto,
+    _file: &FileDescriptorProto,
     message: &DescriptorProto,
     type_name: &str,
 ) -> Result<TokenStream, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
     let type_ident = format_ident!("{}", type_name);
     let proto_ident = format_ident!("{}", msg_name);
@@ -377,32 +419,122 @@ fn generate_from_impl(
 
     for field in &message.field {
         let field_name = field.name.as_deref().unwrap_or("");
-        let field_number = field.number.unwrap_or(0);
-
-        // Check for graphql field options
-        let field_opts = get_cached_graphql_field_options(file_name, msg_name, field_number);
-
-        // Skip if marked
-        if field_opts.as_ref().is_some_and(|o| o.skip) {
-            continue;
-        }
-
         let rust_name = format_ident!("{}", field_name.to_snake_case());
 
-        field_conversions.push(quote! {
-            #rust_name: proto.#rust_name,
-        });
+        // Check if this is a Timestamp field (needs conversion to String)
+        let is_timestamp = field
+            .type_name
+            .as_ref()
+            .map(|t| t.contains("Timestamp"))
+            .unwrap_or(false);
+
+        let conversion = if is_timestamp {
+            // Convert Timestamp to ISO 8601 string
+            quote! {
+                #rust_name: proto.#rust_name.map(|t| {
+                    chrono::DateTime::from_timestamp(t.seconds, t.nanos as u32)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default()
+                }).unwrap_or_default(),
+            }
+        } else {
+            quote! {
+                #rust_name: proto.#rust_name,
+            }
+        };
+
+        field_conversions.push(conversion);
     }
 
     Ok(quote! {
-        impl From<proto::#proto_ident> for #type_ident {
-            fn from(proto: proto::#proto_ident) -> Self {
+        impl From<super::super::#proto_ident> for #type_ident {
+            fn from(proto: super::super::#proto_ident) -> Self {
                 Self {
                     #(#field_conversions)*
                 }
             }
         }
     })
+}
+
+/// Generate From impl for InputObject to proto message conversion
+fn generate_input_from_impl(
+    type_ident: &proc_macro2::Ident,
+    proto_ident: &proc_macro2::Ident,
+    fields: &[FieldDescriptorProto],
+) -> TokenStream {
+    let mut field_conversions = Vec::new();
+
+    for field in fields {
+        let field_name = field.name.as_deref().unwrap_or("");
+        let snake_name = field_name.to_snake_case();
+
+        // Escape Rust keywords
+        let rust_name = escape_rust_keyword(&snake_name);
+
+        // Check field type characteristics
+        let proto_type = field.r#type();
+        let is_optional = field.proto3_optional.unwrap_or(false);
+        let is_repeated = field.label() == prost_types::field_descriptor_proto::Label::Repeated;
+        let is_message = matches!(proto_type, Type::Message);
+        let is_enum = matches!(proto_type, Type::Enum);
+
+        let conversion = if is_enum && is_optional {
+            // Optional enum: convert to i32 via super::super:: proto enum
+            let enum_name = field
+                .type_name
+                .as_ref()
+                .map(|t| t.rsplit('.').next().unwrap_or(t))
+                .unwrap_or("");
+            let enum_ident = format_ident!("{}", enum_name.to_upper_camel_case());
+            quote! {
+                #rust_name: input.#rust_name.map(|e| super::super::#enum_ident::from(e) as i32),
+            }
+        } else if is_enum {
+            // Required enum: convert to i32 via super::super:: proto enum
+            let enum_name = field
+                .type_name
+                .as_ref()
+                .map(|t| t.rsplit('.').next().unwrap_or(t))
+                .unwrap_or("");
+            let enum_ident = format_ident!("{}", enum_name.to_upper_camel_case());
+            quote! {
+                #rust_name: super::super::#enum_ident::from(input.#rust_name) as i32,
+            }
+        } else if is_message && is_optional {
+            // Optional nested type: .map(Into::into)
+            quote! {
+                #rust_name: input.#rust_name.map(Into::into),
+            }
+        } else if is_message && is_repeated {
+            // Repeated nested type: .into_iter().map(Into::into).collect()
+            quote! {
+                #rust_name: input.#rust_name.into_iter().map(Into::into).collect(),
+            }
+        } else if is_message {
+            // Required nested type: .into()
+            quote! {
+                #rust_name: input.#rust_name.into(),
+            }
+        } else {
+            // Primitive type: direct copy
+            quote! {
+                #rust_name: input.#rust_name,
+            }
+        };
+
+        field_conversions.push(conversion);
+    }
+
+    quote! {
+        impl From<#type_ident> for super::super::#proto_ident {
+            fn from(input: #type_ident) -> Self {
+                Self {
+                    #(#field_conversions)*
+                }
+            }
+        }
+    }
 }
 
 /// Convert proto field type to Rust type
@@ -422,6 +554,11 @@ fn proto_type_to_rust_type(field: &FieldDescriptorProto) -> TokenStream {
         Type::Message | Type::Enum | Type::Group => {
             // For message types, use the type name
             if let Some(type_name) = field.type_name.as_ref() {
+                // Handle Timestamp specially - convert to String in GraphQL
+                if type_name.contains("Timestamp") {
+                    return quote! { String };
+                }
+
                 let name = type_name
                     .rsplit('.')
                     .next()
@@ -476,5 +613,155 @@ fn generate_field_resolver_body(field: &FieldDescriptorProto, is_optional: bool)
         quote! { self.#field_ident }
     } else {
         quote! { self.#field_ident.clone() }
+    }
+}
+
+/// Generate relation resolver methods from storage entity relations
+fn generate_relation_resolvers(
+    parent_type: &str,
+    relations: &[RelationDef],
+) -> Result<TokenStream, GeneratorError> {
+    let mut resolvers = Vec::new();
+
+    for relation in relations {
+        let resolver = generate_single_relation_resolver(parent_type, relation)?;
+        resolvers.push(resolver);
+    }
+
+    Ok(quote! { #(#resolvers)* })
+}
+
+/// Generate a single relation resolver
+fn generate_single_relation_resolver(
+    _parent_type: &str,
+    relation: &RelationDef,
+) -> Result<TokenStream, GeneratorError> {
+    let relation_name = &relation.name;
+    let related_type = &relation.related;
+    let foreign_key = &relation.foreign_key;
+
+    let method_ident = format_ident!("{}", relation_name.to_snake_case());
+    let related_ident = format_ident!("{}", related_type.to_upper_camel_case());
+    let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
+
+    // Generate service and storage names
+    let related_service = format!("{}Service", related_type.to_upper_camel_case());
+    let storage_type = format!("SeaOrm{}Storage", related_service);
+    let storage_ident = format_ident!("{}", storage_type);
+
+    let relation_type = relation.r#type();
+
+    match relation_type {
+        RelationType::HasMany | RelationType::ManyToMany => {
+            // HAS_MANY: User.posts - filter by foreign key
+            // Storage method is list_{related_plural} e.g., list_posts
+            let list_method = format_ident!("list_{}s", related_type.to_snake_case());
+            let list_request = format_ident!("List{}sRequest", related_type.to_upper_camel_case());
+            let connection_type = format_ident!("{}Connection", related_type.to_upper_camel_case());
+            let filter_type = format_ident!("{}Filter", related_type.to_upper_camel_case());
+            let int_filter = format_ident!("Int64Filter");
+
+            // Generate storage trait name for import
+            let storage_trait = format_ident!("{}Storage", related_service);
+
+            Ok(quote! {
+                /// Resolve related #relation_name
+                async fn #method_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                    first: Option<i32>,
+                    after: Option<String>,
+                ) -> Result<super::#connection_type> {
+                    // Import storage type and trait from parent module (blog/)
+                    use super::super::#storage_ident;
+                    use super::super::{#list_request, #filter_type, #int_filter};
+                    // Import storage trait for method access
+                    use super::super::#storage_trait;
+
+                    let storage = ctx.data_unchecked::<std::sync::Arc<#storage_ident>>();
+                    let mut filter = #filter_type::default();
+                    filter.#fk_ident = Some(#int_filter {
+                        eq: Some(self.id),
+                        ..Default::default()
+                    });
+
+                    let request = #list_request {
+                        after,
+                        before: None,
+                        first,
+                        last: None,
+                        filter: Some(filter),
+                        order_by: None,
+                    };
+
+                    let response = storage.#list_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+
+                    Ok(response.into())
+                }
+            })
+        }
+        RelationType::BelongsTo | RelationType::HasOne => {
+            // BELONGS_TO: Post.author - get by id from foreign key
+            // Storage method is get_{related} e.g., get_user
+            // Response field is the related type name in snake_case e.g., response.user
+            let get_method = format_ident!("get_{}", related_type.to_snake_case());
+            let get_request = format_ident!("Get{}Request", related_type.to_upper_camel_case());
+            let response_field = format_ident!("{}", related_type.to_snake_case());
+
+            // Generate storage trait name for import
+            let storage_trait = format_ident!("{}Storage", related_service);
+
+            // For BELONGS_TO, we need the FK on this type, not the related type
+            // The FK is on the current entity pointing to the related entity
+            Ok(quote! {
+                /// Resolve related #relation_name
+                async fn #method_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                ) -> Result<Option<super::#related_ident>> {
+                    // Import storage type and trait from parent module (blog/)
+                    use super::super::#storage_ident;
+                    use super::super::#get_request;
+                    // Import storage trait for method access
+                    use super::super::#storage_trait;
+
+                    let storage = ctx.data_unchecked::<std::sync::Arc<#storage_ident>>();
+                    let request = #get_request { id: self.#fk_ident };
+
+                    match storage.#get_method(request).await {
+                        Ok(response) => Ok(response.#response_field.map(super::#related_ident::from)),
+                        Err(e) => {
+                            // Return None for not found, propagate other errors
+                            if e.to_string().contains("not found") {
+                                Ok(None)
+                            } else {
+                                Err(async_graphql::Error::new(e.to_string()))
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        _ => Ok(quote! {}),
+    }
+}
+
+/// Escape Rust keywords by prefixing with r#
+fn escape_rust_keyword(name: &str) -> proc_macro2::Ident {
+    // List of Rust keywords that need escaping
+    const RUST_KEYWORDS: &[&str] = &[
+        "as", "break", "const", "continue", "crate", "else", "enum", "extern",
+        "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
+        "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
+        "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+        "async", "await", "dyn", "abstract", "become", "box", "do", "final",
+        "macro", "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
+    ];
+
+    if RUST_KEYWORDS.contains(&name) {
+        format_ident!("r#{}", name)
+    } else {
+        format_ident!("{}", name)
     }
 }

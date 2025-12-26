@@ -3,53 +3,46 @@
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 use async_graphql::{Object, Context, Result};
-use tonic::transport::Channel;
-/// Mutation resolvers from #svc_name
+use std::sync::Arc;
+use super::super::SeaOrmUserServiceStorage;
+use super::super::UserServiceStorage;
+/// Mutation resolvers from #svc_name (uses storage layer)
+#[derive(Default)]
 pub struct UserServiceMutation;
 #[Object]
 impl UserServiceMutation {
-    #[graphql(desc = "Create a new user")]
+    ///Create a new user
     async fn createUser(
         &self,
         ctx: &Context<'_>,
-        input: CreateUserInput,
-    ) -> Result<User> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let request = CreateUserRequest { input };
-        let response = client
-            .clone()
+        input: super::CreateUserInput,
+    ) -> Result<super::User> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::CreateUserRequest {
+            input: Some(input.into()),
+        };
+        let response = storage
             .create_user(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().user)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(
+            response
+                .user
+                .map(super::User::from)
+                .ok_or_else(|| async_graphql::Error::new("Failed to create"))?,
+        )
     }
-    #[graphql(desc = "Update an existing user")]
-    async fn updateUser(
-        &self,
-        ctx: &Context<'_>,
-        input: UpdateUserRequest,
-    ) -> Result<User> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .update_user(input)
+    ///Delete a user
+    async fn deleteUser(&self, ctx: &Context<'_>, id: i64) -> Result<bool> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::DeleteUserRequest {
+            id,
+        };
+        let response = storage
+            .delete_user(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().user)
-    }
-    #[graphql(desc = "Delete a user")]
-    async fn deleteUser(
-        &self,
-        ctx: &Context<'_>,
-        input: DeleteUserRequest,
-    ) -> Result<DeleteUserResponse> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .delete_user(input)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner())
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(response.success)
     }
 }
-type ServiceClient = super::proto::UserServiceClient<Channel>;
+type Storage = SeaOrmUserServiceStorage;

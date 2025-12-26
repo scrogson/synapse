@@ -3,53 +3,46 @@
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 use async_graphql::{Object, Context, Result};
-use tonic::transport::Channel;
-/// Mutation resolvers from #svc_name
+use std::sync::Arc;
+use super::super::SeaOrmPostServiceStorage;
+use super::super::PostServiceStorage;
+/// Mutation resolvers from #svc_name (uses storage layer)
+#[derive(Default)]
 pub struct PostServiceMutation;
 #[Object]
 impl PostServiceMutation {
-    #[graphql(desc = "Create a new post")]
+    ///Create a new post
     async fn createPost(
         &self,
         ctx: &Context<'_>,
-        input: CreatePostInput,
-    ) -> Result<Post> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let request = CreatePostRequest { input };
-        let response = client
-            .clone()
+        input: super::CreatePostInput,
+    ) -> Result<super::Post> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::CreatePostRequest {
+            input: Some(input.into()),
+        };
+        let response = storage
             .create_post(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().post)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(
+            response
+                .post
+                .map(super::Post::from)
+                .ok_or_else(|| async_graphql::Error::new("Failed to create"))?,
+        )
     }
-    #[graphql(desc = "Update an existing post")]
-    async fn updatePost(
-        &self,
-        ctx: &Context<'_>,
-        input: UpdatePostRequest,
-    ) -> Result<Post> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .update_post(input)
+    ///Delete a post
+    async fn deletePost(&self, ctx: &Context<'_>, id: i64) -> Result<bool> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::DeletePostRequest {
+            id,
+        };
+        let response = storage
+            .delete_post(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().post)
-    }
-    #[graphql(desc = "Delete a post")]
-    async fn deletePost(
-        &self,
-        ctx: &Context<'_>,
-        input: DeletePostRequest,
-    ) -> Result<DeletePostResponse> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .delete_post(input)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner())
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(response.success)
     }
 }
-type ServiceClient = super::proto::PostServiceClient<Channel>;
+type Storage = SeaOrmPostServiceStorage;

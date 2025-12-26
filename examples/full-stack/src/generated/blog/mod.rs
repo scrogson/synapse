@@ -49,8 +49,8 @@ pub mod post_service;
 // Conversions between proto types and SeaORM entities
 pub mod conversions;
 
-// GraphQL schema
-pub mod graphql_schema;
+// GraphQL schema (synapse-generated)
+pub mod graphql;
 
 // Re-export for convenience
 pub use user::Model as UserModel;

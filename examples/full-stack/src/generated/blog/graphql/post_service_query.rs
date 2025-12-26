@@ -3,34 +3,52 @@
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 use async_graphql::{Object, Context, Result};
-use tonic::transport::Channel;
-/// Query resolvers from #svc_name
+use std::sync::Arc;
+use super::super::SeaOrmPostServiceStorage;
+use super::super::PostServiceStorage;
+/// Query resolvers from #svc_name (uses storage layer)
+#[derive(Default)]
 pub struct PostServiceQuery;
 #[Object]
 impl PostServiceQuery {
-    #[graphql(desc = "Get a post by ID")]
-    async fn post(&self, ctx: &Context<'_>, input: GetPostRequest) -> Result<Post> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .get_post(input)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().post)
+    ///Get a post by ID
+    async fn post(&self, ctx: &Context<'_>, id: i64) -> Result<Option<super::Post>> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::GetPostRequest { id };
+        match storage.get_post(request).await {
+            Ok(response) => Ok(response.post.map(super::Post::from)),
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Ok(None)
+                } else {
+                    Err(async_graphql::Error::new(e.to_string()))
+                }
+            }
+        }
     }
-    #[graphql(desc = "List posts with pagination")]
+    ///List posts with pagination
     async fn posts(
         &self,
         ctx: &Context<'_>,
-        input: ListPostsRequest,
-    ) -> Result<PostConnection> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .list_posts(input)
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<i32>,
+        last: Option<i32>,
+    ) -> Result<super::PostConnection> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::ListPostsRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: None,
+            order_by: None,
+        };
+        let response = storage
+            .list_posts(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner())
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(response.into())
     }
 }
-type ServiceClient = super::proto::PostServiceClient<Channel>;
+type Storage = SeaOrmPostServiceStorage;

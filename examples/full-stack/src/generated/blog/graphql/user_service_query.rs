@@ -3,34 +3,52 @@
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 use async_graphql::{Object, Context, Result};
-use tonic::transport::Channel;
-/// Query resolvers from #svc_name
+use std::sync::Arc;
+use super::super::SeaOrmUserServiceStorage;
+use super::super::UserServiceStorage;
+/// Query resolvers from #svc_name (uses storage layer)
+#[derive(Default)]
 pub struct UserServiceQuery;
 #[Object]
 impl UserServiceQuery {
-    #[graphql(desc = "Get a user by ID")]
-    async fn user(&self, ctx: &Context<'_>, input: GetUserRequest) -> Result<User> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .get_user(input)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner().user)
+    ///Get a user by ID
+    async fn user(&self, ctx: &Context<'_>, id: i64) -> Result<Option<super::User>> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::GetUserRequest { id };
+        match storage.get_user(request).await {
+            Ok(response) => Ok(response.user.map(super::User::from)),
+            Err(e) => {
+                if e.to_string().contains("not found") {
+                    Ok(None)
+                } else {
+                    Err(async_graphql::Error::new(e.to_string()))
+                }
+            }
+        }
     }
-    #[graphql(desc = "List users with pagination")]
+    ///List users with pagination
     async fn users(
         &self,
         ctx: &Context<'_>,
-        input: ListUsersRequest,
-    ) -> Result<UserConnection> {
-        let client = ctx.data_unchecked::<ServiceClient>();
-        let response = client
-            .clone()
-            .list_users(input)
+        after: Option<String>,
+        before: Option<String>,
+        first: Option<i32>,
+        last: Option<i32>,
+    ) -> Result<super::UserConnection> {
+        let storage = ctx.data_unchecked::<Arc<Storage>>();
+        let request = super::super::ListUsersRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: None,
+            order_by: None,
+        };
+        let response = storage
+            .list_users(request)
             .await
-            .map_err(|e| async_graphql::Error::new(e.message()))?;
-        Ok(response.into_inner())
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(response.into())
     }
 }
-type ServiceClient = super::proto::UserServiceClient<Channel>;
+type Storage = SeaOrmUserServiceStorage;

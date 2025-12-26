@@ -6,12 +6,14 @@
 //! - Query/Mutation resolvers from services
 //! - DataLoader integration for N+1 prevention
 //! - Relay Node interface and connections
+//! - Combined schema with Query/Mutation/Subscription
 
 mod connection;
 mod dataloader;
 mod node;
 mod object;
 mod resolver;
+mod schema;
 
 use crate::error::GeneratorError;
 use prost_types::compiler::code_generator_response::File;
@@ -49,4 +51,16 @@ pub fn generate_dataloaders(
     message: &DescriptorProto,
 ) -> Result<Vec<File>, GeneratorError> {
     dataloader::generate(file, message)
+}
+
+/// Generate the unified GraphQL schema mod.rs for a file
+///
+/// This creates the graphql/mod.rs that:
+/// - Imports all generated sub-modules (entities, inputs, filters)
+/// - Defines combined Query/Mutation using MergedObject
+/// - Defines Connection types (PageInfo, Edge, Connection)
+/// - Provides schema builder function
+#[allow(dead_code)]
+pub fn generate_schema(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
+    schema::generate(file)
 }

@@ -31,12 +31,12 @@ use generated::blog::{
     SeaOrmPostServiceStorage,
     UserServiceGrpcService,
     PostServiceGrpcService,
-    graphql_schema::{build_schema, BlogSchema},
+    graphql::{build_schema, AppSchema},
 };
 
 /// GraphQL handler
 async fn graphql_handler(
-    State(schema): State<BlogSchema>,
+    State(schema): State<AppSchema>,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
     schema.execute(req.into_inner()).await.into()
