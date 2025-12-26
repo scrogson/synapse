@@ -59,6 +59,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             for generated in graphql::generate_dataloaders(proto_file, message)? {
                 files.push(generated);
             }
+            // Generate entity loader for BelongsTo relations
+            if let Some(generated) = graphql::generate_entity_loader(proto_file, message)? {
+                files.push(generated);
+            }
         }
 
         // Also process non-entity messages in the main file (request/response types)

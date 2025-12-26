@@ -57,6 +57,17 @@ pub fn generate_dataloaders(
     dataloader::generate(file, message)
 }
 
+/// Generate an entity loader for a message (for BelongsTo relations)
+///
+/// Creates a DataLoader that fetches entities by ID, used for relation resolvers.
+/// E.g., UserLoader batches `Post.author` lookups.
+pub fn generate_entity_loader(
+    file: &FileDescriptorProto,
+    message: &DescriptorProto,
+) -> Result<Option<File>, GeneratorError> {
+    dataloader::generate_entity_loader(file, message)
+}
+
 /// Generate the unified GraphQL schema mod.rs for a file
 ///
 /// This creates the graphql/mod.rs that:

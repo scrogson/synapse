@@ -1,7 +1,7 @@
 //! GraphQL resolver generation
 //!
 //! Generates async-graphql Query/Mutation resolvers from protobuf service definitions.
-//! Resolvers use the storage layer directly (not gRPC clients).
+//! Resolvers use gRPC clients (tonic-generated) for data fetching.
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
@@ -74,7 +74,7 @@ pub fn generate(
     Ok(files)
 }
 
-/// Generate a Query struct with resolver methods using storage
+/// Generate a Query struct with resolver methods using gRPC client
 fn generate_query_struct(
     file: &FileDescriptorProto,
     service: &ServiceDescriptorProto,
@@ -87,15 +87,14 @@ fn generate_query_struct(
     let query_name = format!("{}Query", svc_name.to_upper_camel_case());
     let query_ident = format_ident!("{}", query_name);
 
-    // Storage type
-    let storage_type = format!("SeaOrm{}Storage", svc_name.to_upper_camel_case());
-    let storage_ident = format_ident!("{}", storage_type);
+    // gRPC client type - in submodule {service}_client::{Service}Client
+    let client_module = format!("{}_client", svc_name.to_snake_case());
+    let client_module_ident = format_ident!("{}", client_module);
+    let client_type = format!("{}Client", svc_name.to_upper_camel_case());
+    let client_ident = format_ident!("{}", client_type);
 
     // Generate resolver methods
     let resolver_methods = generate_query_resolver_methods(svc_name, methods)?;
-
-    // Generate storage trait name
-    let storage_trait = format_ident!("{}Storage", svc_name.to_upper_camel_case());
 
     let code = quote! {
         //! GraphQL Query resolvers for #svc_name
@@ -105,12 +104,11 @@ fn generate_query_struct(
         #![allow(unused_imports)]
 
         use async_graphql::{Object, Context, Result};
-        use std::sync::Arc;
-        // Import storage type and trait from parent module (blog/)
-        use super::super::#storage_ident;
-        use super::super::#storage_trait;
+        use tonic::transport::Channel;
+        // Import gRPC client from parent module (blog/{svc}_client)
+        use super::super::#client_module_ident::#client_ident;
 
-        /// Query resolvers from #svc_name (uses storage layer)
+        /// Query resolvers from #svc_name (uses gRPC client)
         #[derive(Default)]
         pub struct #query_ident;
 
@@ -119,8 +117,8 @@ fn generate_query_struct(
             #resolver_methods
         }
 
-        // Storage type alias
-        type Storage = #storage_ident;
+        // Client type alias
+        type Client = #client_ident<Channel>;
     };
 
     // Format the generated code
@@ -145,7 +143,7 @@ fn generate_query_struct(
     }))
 }
 
-/// Generate a Mutation struct with resolver methods using storage
+/// Generate a Mutation struct with resolver methods using gRPC client
 fn generate_mutation_struct(
     file: &FileDescriptorProto,
     service: &ServiceDescriptorProto,
@@ -158,15 +156,14 @@ fn generate_mutation_struct(
     let mutation_name = format!("{}Mutation", svc_name.to_upper_camel_case());
     let mutation_ident = format_ident!("{}", mutation_name);
 
-    // Storage type
-    let storage_type = format!("SeaOrm{}Storage", svc_name.to_upper_camel_case());
-    let storage_ident = format_ident!("{}", storage_type);
+    // gRPC client type - in submodule {service}_client::{Service}Client
+    let client_module = format!("{}_client", svc_name.to_snake_case());
+    let client_module_ident = format_ident!("{}", client_module);
+    let client_type = format!("{}Client", svc_name.to_upper_camel_case());
+    let client_ident = format_ident!("{}", client_type);
 
     // Generate resolver methods
     let resolver_methods = generate_mutation_resolver_methods(svc_name, methods)?;
-
-    // Generate storage trait name
-    let storage_trait = format_ident!("{}Storage", svc_name.to_upper_camel_case());
 
     let code = quote! {
         //! GraphQL Mutation resolvers for #svc_name
@@ -176,12 +173,11 @@ fn generate_mutation_struct(
         #![allow(unused_imports)]
 
         use async_graphql::{Object, Context, Result};
-        use std::sync::Arc;
-        // Import storage type and trait from parent module (blog/)
-        use super::super::#storage_ident;
-        use super::super::#storage_trait;
+        use tonic::transport::Channel;
+        // Import gRPC client from parent module (blog/{svc}_client)
+        use super::super::#client_module_ident::#client_ident;
 
-        /// Mutation resolvers from #svc_name (uses storage layer)
+        /// Mutation resolvers from #svc_name (uses gRPC client)
         #[derive(Default)]
         pub struct #mutation_ident;
 
@@ -190,8 +186,8 @@ fn generate_mutation_struct(
             #resolver_methods
         }
 
-        // Storage type alias
-        type Storage = #storage_ident;
+        // Client type alias
+        type Client = #client_ident<Channel>;
     };
 
     // Format the generated code
@@ -249,8 +245,8 @@ fn generate_query_resolver_methods(
             })
             .unwrap_or_else(|| quote! {});
 
-        // Storage method name
-        let storage_method = format_ident!("{}", method_name.to_snake_case());
+        // gRPC method name (snake_case)
+        let grpc_method = format_ident!("{}", method_name.to_snake_case());
 
         // Determine if this is a list or get operation
         let is_list = method_name.to_lowercase().starts_with("list");
@@ -303,7 +299,7 @@ fn generate_query_resolver_methods(
                     filter: Option<super::#filter_type>,
                     order_by: Option<super::#order_by_type>,
                 ) -> Result<super::#output_type> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let client = ctx.data_unchecked::<Client>();
                     let request = super::super::#request_type {
                         after,
                         before,
@@ -312,9 +308,9 @@ fn generate_query_resolver_methods(
                         filter: filter.map(|f| f.into()),
                         order_by: order_by.map(|o| o.into()),
                     };
-                    let response = storage.#storage_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    Ok(response.into())
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().into())
                 }
             }
         } else {
@@ -326,15 +322,15 @@ fn generate_query_resolver_methods(
                     ctx: &Context<'_>,
                     id: i64,
                 ) -> Result<Option<super::#output_type>> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let client = ctx.data_unchecked::<Client>();
                     let request = super::super::#request_type { id };
-                    match storage.#storage_method(request).await {
-                        Ok(response) => Ok(response.#output_field.map(super::#output_type::from)),
+                    match client.clone().#grpc_method(request).await {
+                        Ok(response) => Ok(response.into_inner().#output_field.map(super::#output_type::from)),
                         Err(e) => {
-                            if e.to_string().contains("not found") {
+                            if e.code() == tonic::Code::NotFound {
                                 Ok(None)
                             } else {
-                                Err(async_graphql::Error::new(e.to_string()))
+                                Err(async_graphql::Error::new(e.message()))
                             }
                         }
                     }
@@ -381,8 +377,8 @@ fn generate_mutation_resolver_methods(
             })
             .unwrap_or_else(|| quote! {});
 
-        // Storage method name
-        let storage_method = format_ident!("{}", method_name.to_snake_case());
+        // gRPC method name (snake_case)
+        let grpc_method = format_ident!("{}", method_name.to_snake_case());
 
         // Get request type
         let request_type = method
@@ -428,11 +424,11 @@ fn generate_mutation_resolver_methods(
                     ctx: &Context<'_>,
                     id: i64,
                 ) -> Result<bool> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let client = ctx.data_unchecked::<Client>();
                     let request = super::super::#request_type { id };
-                    let response = storage.#storage_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    Ok(response.success)
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().success)
                 }
             }
         } else if is_create {
@@ -444,11 +440,11 @@ fn generate_mutation_resolver_methods(
                     ctx: &Context<'_>,
                     input: super::#derived_input_type,
                 ) -> Result<super::#output_type> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let client = ctx.data_unchecked::<Client>();
                     let request: super::super::#request_type = input.into();
-                    let response = storage.#storage_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    Ok(response.#output_field.map(super::#output_type::from)
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
                 }
             }
@@ -462,11 +458,11 @@ fn generate_mutation_resolver_methods(
                     id: i64,
                     input: super::#derived_input_type,
                 ) -> Result<super::#output_type> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
+                    let client = ctx.data_unchecked::<Client>();
                     let request = input.to_request(id);
-                    let response = storage.#storage_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    Ok(response.#output_field.map(super::#output_type::from)
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
                 }
             }
@@ -479,10 +475,10 @@ fn generate_mutation_resolver_methods(
                     ctx: &Context<'_>,
                     request: super::super::#request_type,
                 ) -> Result<super::#output_type> {
-                    let storage = ctx.data_unchecked::<Arc<Storage>>();
-                    let response = storage.#storage_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                    Ok(response.#output_field.map(super::#output_type::from)
+                    let client = ctx.data_unchecked::<Client>();
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Operation failed"))?)
                 }
             }
@@ -491,5 +487,4 @@ fn generate_mutation_resolver_methods(
         method_tokens.push(resolver);
     }
 
-    Ok(quote! { #(#method_tokens)* })
-}
+    Ok(quote! { #(#method_tokens)* })}

@@ -642,7 +642,7 @@ fn generate_relation_resolvers(
 
 /// Generate a single relation resolver
 fn generate_single_relation_resolver(
-    _parent_type: &str,
+    parent_type: &str,
     relation: &RelationDef,
 ) -> Result<TokenStream, GeneratorError> {
     let relation_name = &relation.name;
@@ -653,45 +653,68 @@ fn generate_single_relation_resolver(
     let related_ident = format_ident!("{}", related_type.to_upper_camel_case());
     let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
 
-    // Generate service and storage names
-    let related_service = format!("{}Service", related_type.to_upper_camel_case());
-    let storage_type = format!("SeaOrm{}Storage", related_service);
-    let storage_ident = format_ident!("{}", storage_type);
-
     let relation_type = relation.r#type();
 
     match relation_type {
         RelationType::HasMany | RelationType::ManyToMany => {
-            // HAS_MANY: User.posts - filter by foreign key
-            // Storage method is list_{related_plural} e.g., list_posts
+            // HAS_MANY: Generate both DataLoader-backed and paginated resolvers
+            // 1. posts: [Post!]! - DataLoader for efficient batching
+            // 2. postsCollection(...): PostConnection! - Paginated via gRPC
+
+            let loader_name = format!(
+                "{}sBy{}Loader",
+                related_type.to_upper_camel_case(),
+                parent_type.to_upper_camel_case()
+            );
+            let loader_ident = format_ident!("{}", loader_name);
+
+            // Collection method name (e.g., posts_collection in Rust, postsCollection in GraphQL)
+            let collection_method_ident = format_ident!("{}_collection", relation_name.to_snake_case());
+            let collection_graphql_name = format!("{}Collection", relation_name.to_snake_case());
+
+            // gRPC method and types for paginated access
+            let related_service = format!("{}Service", related_type.to_upper_camel_case());
+            let client_module = format!("{}_client", related_service.to_snake_case());
+            let client_module_ident = format_ident!("{}", client_module);
+            let client_type = format!("{}Client", related_service);
+            let client_ident = format_ident!("{}", client_type);
             let list_method = format_ident!("list_{}s", related_type.to_snake_case());
             let list_request = format_ident!("List{}sRequest", related_type.to_upper_camel_case());
             let connection_type = format_ident!("{}Connection", related_type.to_upper_camel_case());
             let filter_type = format_ident!("{}Filter", related_type.to_upper_camel_case());
-            let int_filter = format_ident!("IntFilter");
-
-            // Generate storage trait name for import
-            let storage_trait = format_ident!("{}Storage", related_service);
 
             Ok(quote! {
-                /// Resolve related #relation_name
+                /// Resolve related #relation_name (uses DataLoader for batching)
+                ///
+                /// Returns all related items efficiently via batched loading.
+                /// For paginated access, use `#relation_name Collection`.
                 async fn #method_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                ) -> Result<Vec<super::#related_ident>> {
+                    let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                    Ok(loader.load_one(self.id).await?.unwrap_or_default())
+                }
+
+                /// Resolve related #relation_name with pagination
+                ///
+                /// Supports cursor-based pagination and filtering.
+                /// For simple access without pagination, use `#relation_name`.
+                #[graphql(name = #collection_graphql_name)]
+                async fn #collection_method_ident(
                     &self,
                     ctx: &Context<'_>,
                     first: Option<i32>,
                     after: Option<String>,
                 ) -> Result<super::#connection_type> {
-                    // Import storage type and trait from parent module (package/)
-                    use super::super::#storage_ident;
+                    use tonic::transport::Channel;
+                    use super::super::#client_module_ident::#client_ident;
                     use super::super::{#list_request, #filter_type};
-                    // Import IntFilter from synapse.relay (graphql/ -> package/ -> generated/ -> synapse/relay/)
-                    use super::super::super::synapse::relay::#int_filter;
-                    // Import storage trait for method access
-                    use super::super::#storage_trait;
+                    use super::super::super::synapse::relay::IntFilter;
 
-                    let storage = ctx.data_unchecked::<std::sync::Arc<#storage_ident>>();
+                    let client = ctx.data_unchecked::<#client_ident<Channel>>();
                     let mut filter = #filter_type::default();
-                    filter.#fk_ident = Some(#int_filter {
+                    filter.#fk_ident = Some(IntFilter {
                         eq: Some(self.id),
                         ..Default::default()
                     });
@@ -705,52 +728,30 @@ fn generate_single_relation_resolver(
                         order_by: None,
                     };
 
-                    let response = storage.#list_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+                    let response = client.clone().#list_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
 
-                    Ok(response.into())
+                    Ok(response.into_inner().into())
                 }
             })
         }
         RelationType::BelongsTo | RelationType::HasOne => {
-            // BELONGS_TO: Post.author - get by id from foreign key
-            // Storage method is get_{related} e.g., get_user
-            // Response field is the related type name in snake_case e.g., response.user
-            let get_method = format_ident!("get_{}", related_type.to_snake_case());
-            let get_request = format_ident!("Get{}Request", related_type.to_upper_camel_case());
-            let response_field = format_ident!("{}", related_type.to_snake_case());
-
-            // Generate storage trait name for import
-            let storage_trait = format_ident!("{}Storage", related_service);
+            // BELONGS_TO: Post.author - use DataLoader for batched lookup
+            // DataLoader batches multiple load_one(author_id) calls into a single batch
+            let loader_name = format!("{}Loader", related_type.to_upper_camel_case());
+            let loader_ident = format_ident!("{}", loader_name);
 
             // For BELONGS_TO, we need the FK on this type, not the related type
             // The FK is on the current entity pointing to the related entity
             Ok(quote! {
-                /// Resolve related #relation_name
+                /// Resolve related #relation_name (uses DataLoader for batching)
                 async fn #method_ident(
                     &self,
                     ctx: &Context<'_>,
                 ) -> Result<Option<super::#related_ident>> {
-                    // Import storage type and trait from parent module (blog/)
-                    use super::super::#storage_ident;
-                    use super::super::#get_request;
-                    // Import storage trait for method access
-                    use super::super::#storage_trait;
-
-                    let storage = ctx.data_unchecked::<std::sync::Arc<#storage_ident>>();
-                    let request = #get_request { id: self.#fk_ident };
-
-                    match storage.#get_method(request).await {
-                        Ok(response) => Ok(response.#response_field.map(super::#related_ident::from)),
-                        Err(e) => {
-                            // Return None for not found, propagate other errors
-                            if e.to_string().contains("not found") {
-                                Ok(None)
-                            } else {
-                                Err(async_graphql::Error::new(e.to_string()))
-                            }
-                        }
-                    }
+                    // Use DataLoader for efficient batched loading
+                    let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                    Ok(loader.load_one(self.#fk_ident).await?)
                 }
             })
         }
