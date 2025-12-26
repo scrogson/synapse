@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "protoc-gen-synapse",
+    "synapse-proto-gen",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/scrogson/synapse"
+
+[workspace.dependencies]
+# Protobuf handling
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = "0.15"
+
+# Code generation
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"
+prettyplease = "0.2"
+
+# Utilities
+heck = "0.5"
+thiserror = "2.0"
+once_cell = "1.19"
