@@ -116,8 +116,8 @@ pub fn generate_node_interface(
     };
 
     // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/node.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/node.rs", package.replace('.', "/"));
 
     Ok(Some(File {
         name: Some(output_path),

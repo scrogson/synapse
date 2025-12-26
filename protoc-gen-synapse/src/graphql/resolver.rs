@@ -131,10 +131,11 @@ fn generate_query_struct(
     };
 
     // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_query.rs", svc_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_query.rs",
+        package.replace('.', "/"),
+        svc_name.to_snake_case()
     );
 
     Ok(Some(File {
@@ -201,10 +202,11 @@ fn generate_mutation_struct(
     };
 
     // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_mutation.rs", svc_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_mutation.rs",
+        package.replace('.', "/"),
+        svc_name.to_snake_case()
     );
 
     Ok(Some(File {

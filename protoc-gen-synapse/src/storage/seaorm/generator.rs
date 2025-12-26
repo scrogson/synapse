@@ -26,32 +26,51 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             })?;
 
         // Collect entities (messages with synapse.storage.entity option)
-        let mut entities = Vec::new();
-        let file_name = file_descriptor.name.as_deref().unwrap_or("");
+        // Search all files (including imports) for entities
+        let mut entities: Vec<&prost_types::DescriptorProto> = Vec::new();
+        let mut entity_file_map: Vec<(&prost_types::FileDescriptorProto, &prost_types::DescriptorProto)> = Vec::new();
 
-        // Process each message in the file
-        for message in &file_descriptor.message_type {
-            let msg_name = message.name.as_deref().unwrap_or("");
-
-            // Check if this is an entity
-            if get_cached_entity_options(file_name, msg_name).is_some() {
-                entities.push(message);
+        for proto_file in &request.proto_file {
+            let proto_file_name = proto_file.name.as_deref().unwrap_or("");
+            for message in &proto_file.message_type {
+                let msg_name = message.name.as_deref().unwrap_or("");
+                if get_cached_entity_options(proto_file_name, msg_name).is_some() {
+                    entities.push(message);
+                    entity_file_map.push((proto_file, message));
+                }
             }
+        }
 
+        // Generate code for entities found in imports
+        for (proto_file, message) in &entity_file_map {
             // Generate entity if has entity options
-            if let Some(generated) = entity::generate(file_descriptor, message)? {
+            if let Some(generated) = entity::generate(proto_file, message)? {
                 files.push(generated);
             }
             // Generate domain type if has validate options with generate_conversion
-            if let Some(generated) = validate::generate(file_descriptor, message)? {
+            if let Some(generated) = validate::generate(proto_file, message)? {
                 files.push(generated);
             }
             // Generate GraphQL Object type if has graphql options
-            if let Some(generated) = graphql::generate_message(file_descriptor, message)? {
+            if let Some(generated) = graphql::generate_message(proto_file, message)? {
                 files.push(generated);
             }
             // Generate DataLoaders for relations
-            for generated in graphql::generate_dataloaders(file_descriptor, message)? {
+            for generated in graphql::generate_dataloaders(proto_file, message)? {
+                files.push(generated);
+            }
+        }
+
+        // Also process non-entity messages in the main file (request/response types)
+        let file_name = file_descriptor.name.as_deref().unwrap_or("");
+        for message in &file_descriptor.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+            // Skip if already processed as entity
+            if get_cached_entity_options(file_name, msg_name).is_some() {
+                continue;
+            }
+            // Generate GraphQL input types for request messages
+            if let Some(generated) = graphql::generate_message(file_descriptor, message)? {
                 files.push(generated);
             }
         }
@@ -59,7 +78,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         // Generate auto-generated filter types for entities
         if !entities.is_empty() {
             let entity_refs: Vec<_> = entities.iter().map(|e| *e).collect();
-            for generated in graphql::generate_filters(file_descriptor, &entity_refs)? {
+            for generated in graphql::generate_filters(file_descriptor, &entity_refs, &request.proto_file)? {
                 files.push(generated);
             }
             for generated in graphql::generate_connections(file_descriptor, &entity_refs)? {
@@ -73,7 +92,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         }
 
         // Generate unified GraphQL schema (mod.rs with Query/Mutation/schema builder)
-        if let Some(generated) = graphql::generate_schema(file_descriptor)? {
+        if let Some(generated) = graphql::generate_schema(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
 
@@ -91,7 +110,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
                 files.push(generated);
             }
             // Storage implementation generation (SeaORM-based)
-            if let Some(generated) = implementation::generate(file_descriptor, svc)? {
+            if let Some(generated) = implementation::generate(file_descriptor, svc, &request.proto_file)? {
                 files.push(generated);
             }
             // gRPC service generation
@@ -109,12 +128,12 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         }
 
         // Generate package mod.rs
-        if let Some(generated) = package::generate(file_descriptor)? {
+        if let Some(generated) = package::generate(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
 
         // Generate conversions.rs
-        if let Some(generated) = package::generate_conversions(file_descriptor)? {
+        if let Some(generated) = package::generate_conversions(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
     }

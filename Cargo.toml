@@ -4,6 +4,9 @@ members = [
     "protoc-gen-synapse",
     "synapse-proto-gen",
 ]
+exclude = [
+    "examples/full-stack",
+]
 
 [workspace.package]
 version = "0.1.0"

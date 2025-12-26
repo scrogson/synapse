@@ -25,9 +25,11 @@ pub struct FieldInfo {
     pub name: String,
     /// Proto field type
     pub proto_type: ProtoType,
-    /// Whether the field is optional
+    /// Whether the field is optional (reserved for future use)
+    #[allow(dead_code)]
     pub optional: bool,
-    /// Whether this is a primary key
+    /// Whether this is a primary key (reserved for future use)
+    #[allow(dead_code)]
     pub primary_key: bool,
 }
 

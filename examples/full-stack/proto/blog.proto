@@ -2,183 +2,21 @@ syntax = "proto3";
 
 package blog;
 
-import "google/protobuf/timestamp.proto";
 import "synapse/graphql/options.proto";
 import "synapse/grpc/options.proto";
 import "synapse/storage/options.proto";
 
-// =============================================================================
-// Entities
-// =============================================================================
+// Entity definitions
+import "blog.entities.proto";
 
-// User entity
-message User {
-  option (synapse.graphql.message) = { node: true };
-  option (synapse.storage.entity) = {
-    table_name: "users"
-    relations: [
-      {
-        name: "posts"
-        type: RELATION_TYPE_HAS_MANY
-        related: "Post"
-        foreign_key: "author_id"
-      }
-    ]
-  };
-
-  int64 id = 1 [(synapse.storage.column) = {
-    primary_key: true
-    auto_increment: true
-  }];
-
-  string email = 2 [(synapse.storage.column) = { unique: true }];
-  string name = 3;
-  optional string bio = 4;
-
-  google.protobuf.Timestamp created_at = 5 [(synapse.storage.column) = {
-    default_expr: "Expr::current_timestamp()"
-  }];
-
-  google.protobuf.Timestamp updated_at = 6 [(synapse.storage.column) = {
-    default_expr: "Expr::current_timestamp()"
-  }];
-}
-
-// Post entity
-message Post {
-  option (synapse.graphql.message) = { node: true };
-  option (synapse.storage.entity) = {
-    table_name: "posts"
-    relations: [
-      {
-        name: "author"
-        type: RELATION_TYPE_BELONGS_TO
-        related: "User"
-        foreign_key: "author_id"
-        references: "id"
-      }
-    ]
-  };
-
-  int64 id = 1 [(synapse.storage.column) = {
-    primary_key: true
-    auto_increment: true
-  }];
-
-  string title = 2;
-  string content = 3;
-  bool published = 4;
-
-  int64 author_id = 5 [(synapse.graphql.field).skip = true];
-
-  google.protobuf.Timestamp created_at = 6 [(synapse.storage.column) = {
-    default_expr: "Expr::current_timestamp()"
-  }];
-
-  google.protobuf.Timestamp updated_at = 7 [(synapse.storage.column) = {
-    default_expr: "Expr::current_timestamp()"
-  }];
-}
-
-// =============================================================================
-// Filter & OrderBy Types (proto definitions - GraphQL wrappers auto-generated)
-// =============================================================================
-
-message StringFilter {
-  optional string eq = 1;
-  optional string ne = 2;
-  optional string contains = 3;
-  optional string starts_with = 4;
-  optional string ends_with = 5;
-}
-
-message BoolFilter {
-  optional bool eq = 1;
-}
-
-message IntFilter {
-  optional int64 eq = 1;
-  optional int64 ne = 2;
-  optional int64 gt = 3;
-  optional int64 gte = 4;
-  optional int64 lt = 5;
-  optional int64 lte = 6;
-  repeated int64 in = 7;
-}
-
-enum OrderDirection {
-  ORDER_DIRECTION_UNSPECIFIED = 0;
-  ASC = 1;
-  DESC = 2;
-}
-
-message UserFilter {
-  optional IntFilter id = 1;
-  optional StringFilter email = 2;
-  optional StringFilter name = 3;
-  optional StringFilter bio = 4;
-}
-
-message UserOrderBy {
-  optional OrderDirection id = 1;
-  optional OrderDirection email = 2;
-  optional OrderDirection name = 3;
-  optional OrderDirection created_at = 4;
-  optional OrderDirection updated_at = 5;
-}
-
-message PostFilter {
-  optional IntFilter id = 1;
-  optional StringFilter title = 2;
-  optional StringFilter content = 3;
-  optional BoolFilter published = 4;
-  optional IntFilter author_id = 5;
-}
-
-message PostOrderBy {
-  optional OrderDirection id = 1;
-  optional OrderDirection title = 2;
-  optional OrderDirection published = 3;
-  optional OrderDirection created_at = 4;
-  optional OrderDirection updated_at = 5;
-}
-
-// =============================================================================
-// Connection Types (proto definitions - GraphQL wrappers auto-generated)
-// =============================================================================
-
-message PageInfo {
-  bool has_next_page = 1;
-  bool has_previous_page = 2;
-  optional string start_cursor = 3;
-  optional string end_cursor = 4;
-}
-
-message UserEdge {
-  string cursor = 1;
-  User node = 2;
-}
-
-message UserConnection {
-  repeated UserEdge edges = 1;
-  PageInfo page_info = 2;
-}
-
-message PostEdge {
-  string cursor = 1;
-  Post node = 2;
-}
-
-message PostConnection {
-  repeated PostEdge edges = 1;
-  PageInfo page_info = 2;
-}
+// Auto-generated types (filters, connections, edges, PageInfo, OrderDirection)
+import "blog.synapse.proto";
 
 // =============================================================================
 // Request/Response Messages
 // =============================================================================
 
-// User CRUD
+// User service messages
 message GetUserRequest {
   int64 id = 1;
 }
@@ -227,7 +65,7 @@ message DeleteUserResponse {
   bool success = 1;
 }
 
-// Post CRUD
+// Post service messages
 message GetPostRequest {
   int64 id = 1;
 }
@@ -263,6 +101,7 @@ message UpdatePostRequest {
   optional string title = 2;
   optional string content = 3;
   optional bool published = 4;
+  optional int64 author_id = 5;
 }
 
 message UpdatePostResponse {

@@ -41,8 +41,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Get input file names for imports (just the filename, not the path)
+    let source_files: Vec<String> = args
+        .input
+        .iter()
+        .filter_map(|p| p.file_name())
+        .filter_map(|n| n.to_str())
+        .map(|s| s.to_string())
+        .collect();
+
     // Generate output proto
-    let output = generator::generate_proto(&entities)?;
+    let output = generator::generate_proto(&entities, &source_files)?;
 
     // Write to file
     std::fs::write(&args.output, output)?;

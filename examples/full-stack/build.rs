@@ -9,11 +9,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&src_generated)?;
 
     // Generate gRPC code with tonic (to OUT_DIR for include_proto!)
+    // Include synapse relay types since blog.synapse.proto imports them
     tonic_build::configure()
         .build_server(true)
         .build_client(true)
         .compile_protos(
-            &["proto/blog.proto"],
+            &[
+                "proto/blog.proto",
+                "../../proto/synapse/relay/types.proto",
+            ],
             &["proto/", "../../proto/"],
         )?;
 
@@ -34,9 +38,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Run protoc with our plugin (to src/generated for direct imports)
+    // Plugin is built to workspace root target directory
     let status = Command::new("protoc")
         .args([
-            "--plugin=protoc-gen-synapse=../../protoc-gen-synapse/target/release/protoc-gen-synapse",
+            "--plugin=protoc-gen-synapse=../../target/release/protoc-gen-synapse",
             &format!("--synapse_out=backend=seaorm:{}", src_generated.display()),
             "-I../../proto",
             "-Iproto",
@@ -50,6 +55,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => println!("cargo:warning=Failed to run protoc-gen-synapse: {}", e),
     }
 
+    // Create the synapse module structure for relay types
+    let synapse_dir = src_generated.join("synapse");
+    let relay_dir = synapse_dir.join("relay");
+    std::fs::create_dir_all(&relay_dir)?;
+
+    // synapse/mod.rs
+    std::fs::write(
+        synapse_dir.join("mod.rs"),
+        r#"//! Synapse generated types
+//! @generated
+#![allow(missing_docs)]
+pub mod relay;
+"#,
+    )?;
+
+    // synapse/relay/mod.rs - includes the prost-generated synapse.relay types
+    std::fs::write(
+        relay_dir.join("mod.rs"),
+        r#"//! Relay types (PageInfo, filters, etc.)
+//! @generated
+#![allow(missing_docs)]
+#![allow(clippy::all)]
+tonic::include_proto!("synapse.relay");
+"#,
+    )?;
+
     // Create a mod.rs file that includes all generated modules
     let mod_content = r#"//! Generated code from proto definitions
 //!
@@ -59,6 +90,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #![allow(unused_imports)]
 #![allow(clippy::all)]
 #![allow(dead_code)]
+
+// Synapse types (relay, etc.) - needed for prost-generated code references
+pub mod synapse;
 
 // Synapse-generated code is in the blog/ subdirectory
 pub mod blog;

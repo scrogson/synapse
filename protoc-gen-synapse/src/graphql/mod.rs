@@ -65,8 +65,11 @@ pub fn generate_dataloaders(
 /// - Defines Connection types (PageInfo, Edge, Connection)
 /// - Provides schema builder function
 #[allow(dead_code)]
-pub fn generate_schema(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
-    schema::generate(file)
+pub fn generate_schema(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    schema::generate(file, all_files)
 }
 
 /// Generate auto-generated filter types for entities in a package
@@ -79,8 +82,9 @@ pub fn generate_schema(file: &FileDescriptorProto) -> Result<Option<File>, Gener
 pub fn generate_filters(
     file: &FileDescriptorProto,
     entities: &[&DescriptorProto],
+    all_files: &[FileDescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
-    filter::generate_filters_for_package(file, entities)
+    filter::generate_filters_for_package(file, entities, all_files)
 }
 
 /// Generate auto-generated Relay connection types for entities in a package

@@ -59,8 +59,10 @@ fn generate_page_info(file: &FileDescriptorProto) -> Result<File, GeneratorError
             pub end_cursor: Option<String>,
         }
 
-        impl From<super::super::PageInfo> for PageInfo {
-            fn from(p: super::super::PageInfo) -> Self {
+        // Convert from proto PageInfo in synapse.relay package
+        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
+        impl From<super::super::super::synapse::relay::PageInfo> for PageInfo {
+            fn from(p: super::super::super::synapse::relay::PageInfo) -> Self {
                 Self {
                     has_next_page: p.has_next_page,
                     has_previous_page: p.has_previous_page,
@@ -77,8 +79,8 @@ fn generate_page_info(file: &FileDescriptorProto) -> Result<File, GeneratorError
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/page_info.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/page_info.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -121,10 +123,11 @@ fn generate_entity_edge(
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_edge.rs", entity_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_edge.rs",
+        package.replace('.', "/"),
+        entity_name.to_snake_case()
     );
 
     Ok(File {
@@ -186,10 +189,11 @@ fn generate_entity_connection(
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_connection.rs", entity_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_connection.rs",
+        package.replace('.', "/"),
+        entity_name.to_snake_case()
     );
 
     Ok(File {

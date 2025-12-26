@@ -29,8 +29,13 @@ pub struct SchemaInfo {
 }
 
 /// Collect schema information from a file descriptor
-pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
-    let file_name = file.name.as_deref().unwrap_or("");
+///
+/// This searches all proto files to find entities that may be defined in imports.
+pub fn collect_schema_info(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> SchemaInfo {
+    let main_package = file.package.as_deref().unwrap_or("");
     let mut info = SchemaInfo {
         entities: Vec::new(),
         input_types: Vec::new(),
@@ -39,33 +44,47 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
         has_auto_filters: false,
     };
 
-    for message in &file.message_type {
-        let msg_name = message.name.as_deref().unwrap_or("");
-        let snake_name = msg_name.to_snake_case();
+    // Search all files for entities that belong to this package (including sub-packages)
+    for proto_file in all_files {
+        let proto_file_name = proto_file.name.as_deref().unwrap_or("");
+        let proto_package = proto_file.package.as_deref().unwrap_or("");
 
-        // Check for graphql options
-        let graphql_opts = get_cached_graphql_message_options(file_name, msg_name);
-        let entity_opts = get_cached_entity_options(file_name, msg_name);
-
-        // Skip if graphql.skip is true
-        if graphql_opts.as_ref().is_some_and(|o| o.skip) {
+        // Only include messages from this package or its sub-packages
+        if !proto_package.starts_with(main_package) {
             continue;
         }
 
-        // Categorize by type
-        if graphql_opts.as_ref().is_some_and(|o| o.input_type) {
-            // Include input types (including proto-defined Filter/OrderBy types)
-            info.input_types.push((msg_name.to_string(), snake_name));
-        } else if entity_opts.is_some() {
-            // It's an entity with a table - filters may be auto-generated
-            info.entities.push((msg_name.to_string(), snake_name));
-            info.has_auto_filters = true;
+        for message in &proto_file.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+            let snake_name = msg_name.to_snake_case();
+
+            // Check for graphql options
+            let graphql_opts = get_cached_graphql_message_options(proto_file_name, msg_name);
+            let entity_opts = get_cached_entity_options(proto_file_name, msg_name);
+
+            // Skip if graphql.skip is true
+            if graphql_opts.as_ref().is_some_and(|o| o.skip) {
+                continue;
+            }
+
+            // Categorize by type
+            if graphql_opts.as_ref().is_some_and(|o| o.input_type) {
+                // Include input types (including proto-defined Filter/OrderBy types)
+                info.input_types.push((msg_name.to_string(), snake_name));
+            } else if entity_opts.is_some() {
+                // It's an entity with a table - filters may be auto-generated
+                info.entities.push((msg_name.to_string(), snake_name));
+                info.has_auto_filters = true;
+            }
         }
     }
 
+    // Services are only in the main file
+    let main_file_name = file.name.as_deref().unwrap_or("");
+
     for service in &file.service {
         let svc_name = service.name.as_deref().unwrap_or("");
-        let svc_opts = get_cached_graphql_service_options(file_name, svc_name);
+        let svc_opts = get_cached_graphql_service_options(main_file_name, svc_name);
 
         if svc_opts.as_ref().is_some_and(|o| o.skip) {
             continue;
@@ -76,7 +95,7 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
         // Collect auto-generated input types from mutation methods
         for method in &service.method {
             let method_name = method.name.as_deref().unwrap_or("");
-            let method_opts = get_cached_graphql_method_options(file_name, svc_name, method_name);
+            let method_opts = get_cached_graphql_method_options(main_file_name, svc_name, method_name);
 
             // Skip if not a mutation
             let operation = method_opts
@@ -109,8 +128,11 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
 }
 
 /// Generate the graphql/mod.rs file that wires everything together
-pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
-    let info = collect_schema_info(file);
+pub fn generate(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    let info = collect_schema_info(file, all_files);
 
     // Skip if no GraphQL types to generate
     if info.entities.is_empty() && info.services.is_empty() {
@@ -129,6 +151,8 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
         pub_uses.push(quote! { pub use string_filter::StringFilter; });
         mod_declarations.push(quote! { mod bool_filter; });
         pub_uses.push(quote! { pub use bool_filter::BoolFilter; });
+        mod_declarations.push(quote! { mod timestamp_filter; });
+        pub_uses.push(quote! { pub use timestamp_filter::TimestampFilter; });
         mod_declarations.push(quote! { mod order_direction; });
         pub_uses.push(quote! { pub use order_direction::OrderDirection; });
         mod_declarations.push(quote! { mod page_info; });
@@ -260,9 +284,9 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
         Err(_) => content,
     };
 
-    // Determine output path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/mod.rs");
+    // Determine output path using package name
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/mod.rs", package.replace('.', "/"));
 
     Ok(Some(File {
         name: Some(output_path),

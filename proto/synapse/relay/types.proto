@@ -9,6 +9,8 @@ syntax = "proto3";
 
 package synapse.relay;
 
+import "google/protobuf/timestamp.proto";
+
 // =============================================================================
 // Pagination Types
 // =============================================================================
@@ -125,4 +127,15 @@ message IdFilter {
   optional string neq = 2;
   repeated string in = 7;
   optional bool is_null = 8;
+}
+
+// Filter for timestamp fields
+message TimestampFilter {
+  optional google.protobuf.Timestamp eq = 1;
+  optional google.protobuf.Timestamp neq = 2;
+  optional google.protobuf.Timestamp gt = 3;
+  optional google.protobuf.Timestamp gte = 4;
+  optional google.protobuf.Timestamp lt = 5;
+  optional google.protobuf.Timestamp lte = 6;
+  optional bool is_null = 7;
 }

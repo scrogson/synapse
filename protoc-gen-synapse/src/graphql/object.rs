@@ -129,11 +129,13 @@ fn generate_object_type(
         Err(_) => content,
     };
 
-    // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}.rs", type_name.to_snake_case()),
+    // Determine output file path - use package, not file name
+    // This ensures all GraphQL types for a package go to the same directory
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}.rs",
+        package.replace('.', "/"),
+        type_name.to_snake_case()
     );
 
     Ok(Some(File {
@@ -223,11 +225,13 @@ fn generate_input_type(
         Err(_) => content,
     };
 
-    // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}.rs", type_name.to_snake_case()),
+    // Determine output file path - use package, not file name
+    // This ensures all GraphQL types for a package go to the same directory
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}.rs",
+        package.replace('.', "/"),
+        type_name.to_snake_case()
     );
 
     Ok(Some(File {
@@ -677,9 +681,11 @@ fn generate_single_relation_resolver(
                     first: Option<i32>,
                     after: Option<String>,
                 ) -> Result<super::#connection_type> {
-                    // Import storage type and trait from parent module (blog/)
+                    // Import storage type and trait from parent module (package/)
                     use super::super::#storage_ident;
-                    use super::super::{#list_request, #filter_type, #int_filter};
+                    use super::super::{#list_request, #filter_type};
+                    // Import IntFilter from synapse.relay (graphql/ -> package/ -> generated/ -> synapse/relay/)
+                    use super::super::super::synapse::relay::#int_filter;
                     // Import storage trait for method access
                     use super::super::#storage_trait;
 

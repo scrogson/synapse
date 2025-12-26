@@ -177,10 +177,11 @@ fn generate_input_type(
     };
 
     // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}.rs", input_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}.rs",
+        package.replace('.', "/"),
+        input_name.to_snake_case()
     );
 
     Ok(Some(File {

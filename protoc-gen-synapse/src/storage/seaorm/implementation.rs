@@ -18,6 +18,7 @@ use quote::{format_ident, quote};
 pub fn generate(
     file: &FileDescriptorProto,
     service: &ServiceDescriptorProto,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Option<File>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let service_name = service.name.as_deref().unwrap_or("");
@@ -55,7 +56,7 @@ pub fn generate(
     );
 
     // Generate method implementations
-    let methods = generate_impl_methods(file, service)?;
+    let methods = generate_impl_methods(file, service, all_files)?;
 
     // Build identifiers
     let impl_ident = format_ident!("{}", impl_name);
@@ -83,6 +84,8 @@ pub fn generate(
         use super::prelude::*;
         use super::#trait_module::{#trait_ident, StorageError};
         use super::conversions::ApplyUpdate;
+        // PageInfo is from synapse.relay package
+        use super::super::synapse::relay::PageInfo;
         use sea_orm::{
             ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
             QueryFilter, QueryOrder, Set,
@@ -132,6 +135,7 @@ pub fn generate(
 fn generate_impl_methods(
     file: &FileDescriptorProto,
     service: &ServiceDescriptorProto,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Vec<TokenStream>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let service_name = service.name.as_deref().unwrap_or("");
@@ -164,7 +168,7 @@ fn generate_impl_methods(
 
         // Generate the method implementation based on method pattern
         let method_impl =
-            generate_method_impl(file, method, &rust_method_name, &entity_name, &method_options)?;
+            generate_method_impl(file, method, &rust_method_name, &entity_name, &method_options, all_files)?;
 
         if let Some(impl_tokens) = method_impl {
             result.push(impl_tokens);
@@ -181,6 +185,7 @@ fn generate_method_impl(
     rust_method_name: &str,
     entity_name: &str,
     method_options: &Option<storage::MethodOptions>,
+    all_files: &[FileDescriptorProto],
 ) -> Result<Option<TokenStream>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let method_name = method.name.as_deref().unwrap_or("");
@@ -209,7 +214,7 @@ fn generate_method_impl(
             generate_get_impl(&entity_module, &response_ident, entity_options.as_ref())
         }
         "list" | "List" | "LIST" => {
-            generate_list_impl(file, &request_type, &entity_module, &response_ident)
+            generate_list_impl(file, &request_type, &entity_module, &response_ident, all_files)
         }
         "create" | "Create" | "CREATE" => {
             generate_create_impl(&entity_module, &response_ident, entity_options.as_ref())
@@ -266,6 +271,7 @@ fn generate_list_impl(
     request_type: &str,
     entity_module: &proc_macro2::Ident,
     response_ident: &proc_macro2::Ident,
+    all_files: &[FileDescriptorProto],
 ) -> TokenStream {
     // Derive the edge type name (e.g., user -> UserEdge)
     let entity_type = entity_module.to_string().to_upper_camel_case();
@@ -279,16 +285,38 @@ fn generate_list_impl(
 
     // Generate filter code if request has a filter field
     let filter_code = request_msg
-        .and_then(|msg| generate_filter_code(file, msg, entity_module))
+        .and_then(|msg| generate_filter_code(msg, entity_module, all_files))
         .unwrap_or_else(|| quote! {});
 
     // Generate orderBy code if request has an order_by field
-    let order_by_code = request_msg
-        .and_then(|msg| generate_order_by_code(file, msg, entity_module))
-        .unwrap_or_else(|| quote! {
+    let has_order_by = request_msg
+        .map(|msg| msg.field.iter().any(|f| f.name.as_deref() == Some("order_by")))
+        .unwrap_or(false);
+
+    let order_by_code = if has_order_by {
+        request_msg
+            .and_then(|msg| generate_order_by_code(msg, entity_module, all_files))
+            .unwrap_or_else(|| quote! {})
+    } else {
+        quote! {}
+    };
+
+    let ordering_code = if has_order_by {
+        quote! {
+            // Apply ordering from request
+            let mut ordered = false;
+            #order_by_code
+            if !ordered {
+                // Default ordering by id if no order specified
+                query = query.order_by_asc(#entity_module::Column::Id);
+            }
+        }
+    } else {
+        quote! {
             // Default ordering by id
             query = query.order_by_asc(#entity_module::Column::Id);
-        });
+        }
+    };
 
     quote! {
         use sea_orm::{QuerySelect, Condition};
@@ -302,12 +330,7 @@ fn generate_list_impl(
         // Apply filters
         #filter_code
 
-        // Apply ordering
-        let mut ordered = false;
-        #order_by_code
-        if !ordered {
-            query = query.order_by_asc(#entity_module::Column::Id);
-        }
+        #ordering_code
 
         // Apply cursor filter (after = id to start after)
         if let Some(ref after) = request.after {
@@ -361,9 +384,9 @@ fn generate_list_impl(
 
 /// Generate filter condition code from request message
 fn generate_filter_code(
-    file: &FileDescriptorProto,
     request_msg: &DescriptorProto,
     entity_module: &proc_macro2::Ident,
+    all_files: &[FileDescriptorProto],
 ) -> Option<TokenStream> {
     // Find the filter field in the request
     let filter_field = request_msg.field.iter().find(|f| {
@@ -374,10 +397,11 @@ fn generate_filter_code(
     let filter_type_name = filter_field.type_name.as_ref()?;
     let filter_type = filter_type_name.rsplit('.').next()?;
 
-    // Find the filter message definition
-    let filter_msg = file.message_type.iter().find(|m| {
-        m.name.as_deref() == Some(filter_type)
-    })?;
+    // Find the filter message definition in any proto file
+    let filter_msg = all_files
+        .iter()
+        .flat_map(|f| f.message_type.iter())
+        .find(|m| m.name.as_deref() == Some(filter_type))?;
 
     // Generate condition code for each field in the filter
     let mut field_conditions = Vec::new();
@@ -441,7 +465,7 @@ fn generate_field_filter_code(
             quote! {
                 if let Some(ref f) = filter.#field_ident {
                     if let Some(v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v)); }
-                    if let Some(v) = f.ne { cond = cond.add(#entity_module::Column::#column_ident.ne(v)); }
+                    if let Some(v) = f.neq { cond = cond.add(#entity_module::Column::#column_ident.ne(v)); }
                     if let Some(v) = f.gt { cond = cond.add(#entity_module::Column::#column_ident.gt(v)); }
                     if let Some(v) = f.gte { cond = cond.add(#entity_module::Column::#column_ident.gte(v)); }
                     if let Some(v) = f.lt { cond = cond.add(#entity_module::Column::#column_ident.lt(v)); }
@@ -454,7 +478,7 @@ fn generate_field_filter_code(
             quote! {
                 if let Some(ref f) = filter.#field_ident {
                     if let Some(ref v) = f.eq { cond = cond.add(#entity_module::Column::#column_ident.eq(v.clone())); }
-                    if let Some(ref v) = f.ne { cond = cond.add(#entity_module::Column::#column_ident.ne(v.clone())); }
+                    if let Some(ref v) = f.neq { cond = cond.add(#entity_module::Column::#column_ident.ne(v.clone())); }
                     if let Some(ref v) = f.contains { cond = cond.add(#entity_module::Column::#column_ident.contains(v)); }
                     if let Some(ref v) = f.starts_with { cond = cond.add(#entity_module::Column::#column_ident.starts_with(v)); }
                     if let Some(ref v) = f.ends_with { cond = cond.add(#entity_module::Column::#column_ident.ends_with(v)); }
@@ -473,9 +497,9 @@ fn generate_field_filter_code(
 
 /// Generate orderBy code from request message
 fn generate_order_by_code(
-    file: &FileDescriptorProto,
     request_msg: &DescriptorProto,
     entity_module: &proc_macro2::Ident,
+    all_files: &[FileDescriptorProto],
 ) -> Option<TokenStream> {
     // Find the order_by field in the request
     let order_by_field = request_msg.field.iter().find(|f| {
@@ -486,10 +510,11 @@ fn generate_order_by_code(
     let order_by_type_name = order_by_field.type_name.as_ref()?;
     let order_by_type = order_by_type_name.rsplit('.').next()?;
 
-    // Find the orderBy message definition
-    let order_by_msg = file.message_type.iter().find(|m| {
-        m.name.as_deref() == Some(order_by_type)
-    })?;
+    // Find the orderBy message definition in any proto file
+    let order_by_msg = all_files
+        .iter()
+        .flat_map(|f| f.message_type.iter())
+        .find(|m| m.name.as_deref() == Some(order_by_type))?;
 
     // Generate ordering code for each field
     let mut order_statements = Vec::new();

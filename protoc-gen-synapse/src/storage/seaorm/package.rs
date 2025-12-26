@@ -24,28 +24,34 @@ pub struct PackageInfo {
     pub services: Vec<String>,
 }
 
-/// Collect package information from a file descriptor
-pub fn collect_package_info(file: &FileDescriptorProto) -> PackageInfo {
-    let file_name = file.name.as_deref().unwrap_or("");
+/// Collect package information from all proto files (for entities in imports)
+pub fn collect_package_info_all_files(
+    all_files: &[FileDescriptorProto],
+    main_file: &FileDescriptorProto,
+) -> PackageInfo {
+    let main_file_name = main_file.name.as_deref().unwrap_or("");
     let mut info = PackageInfo {
         entities: Vec::new(),
         services: Vec::new(),
     };
 
-    // Collect entities
-    for message in &file.message_type {
-        let msg_name = message.name.as_deref().unwrap_or("");
-        if let Some(opts) = get_cached_entity_options(file_name, msg_name) {
-            if !opts.skip {
-                info.entities.push(msg_name.to_string());
+    // Collect entities from ALL files
+    for file in all_files {
+        let file_name = file.name.as_deref().unwrap_or("");
+        for message in &file.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+            if let Some(opts) = get_cached_entity_options(file_name, msg_name) {
+                if !opts.skip {
+                    info.entities.push(msg_name.to_string());
+                }
             }
         }
     }
 
-    // Collect services
-    for service in &file.service {
+    // Collect services from main file only
+    for service in &main_file.service {
         let svc_name = service.name.as_deref().unwrap_or("");
-        if let Some(opts) = get_cached_service_options(file_name, svc_name) {
+        if let Some(opts) = get_cached_service_options(main_file_name, svc_name) {
             if !opts.skip {
                 info.services.push(svc_name.to_string());
             }
@@ -56,13 +62,16 @@ pub fn collect_package_info(file: &FileDescriptorProto) -> PackageInfo {
 }
 
 /// Generate the package mod.rs file
-pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
+pub fn generate(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
     let package = file.package.as_deref().unwrap_or("");
     if package.is_empty() {
         return Ok(None);
     }
 
-    let info = collect_package_info(file);
+    let info = collect_package_info_all_files(all_files, file);
 
     // Skip if no entities or services
     if info.entities.is_empty() && info.services.is_empty() {
@@ -186,14 +195,17 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
 }
 
 /// Generate the conversions.rs file with all From implementations
-pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
+pub fn generate_conversions(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
     let package = file.package.as_deref().unwrap_or("");
 
     if package.is_empty() {
         return Ok(None);
     }
 
-    let info = collect_package_info(file);
+    let info = collect_package_info_all_files(all_files, file);
 
     if info.entities.is_empty() {
         return Ok(None);
@@ -207,8 +219,11 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
         let create_request = format_ident!("Create{}Request", entity.to_upper_camel_case());
         let update_request = format_ident!("Update{}Request", entity.to_upper_camel_case());
 
-        // Find the entity message to get its fields
-        let message = file.message_type.iter().find(|m| m.name.as_deref() == Some(entity));
+        // Find the entity message across all files
+        let message = all_files
+            .iter()
+            .flat_map(|f| f.message_type.iter())
+            .find(|m| m.name.as_deref() == Some(entity));
 
         if let Some(msg) = message {
             // Generate Model -> Proto conversion
@@ -225,10 +240,10 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
                 }
             });
 
-            // Find CreateRequest message (fields are directly on request, not nested)
-            let create_msg = file
-                .message_type
+            // Find CreateRequest message across all files
+            let create_msg = all_files
                 .iter()
+                .flat_map(|f| f.message_type.iter())
                 .find(|m| m.name.as_deref() == Some(&format!("Create{}Request", entity)));
 
             if let Some(create) = create_msg {
@@ -247,10 +262,10 @@ pub fn generate_conversions(file: &FileDescriptorProto) -> Result<Option<File>, 
                 });
             }
 
-            // Find UpdateRequest message (fields are directly on request, not nested)
-            let update_msg = file
-                .message_type
+            // Find UpdateRequest message across all files
+            let update_msg = all_files
                 .iter()
+                .flat_map(|f| f.message_type.iter())
                 .find(|m| m.name.as_deref() == Some(&format!("Update{}Request", entity)));
 
             if let Some(update) = update_msg {

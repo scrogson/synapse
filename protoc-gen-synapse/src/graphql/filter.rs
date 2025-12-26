@@ -20,6 +20,7 @@ pub struct FilterContext {
     pub needs_string_filter: bool,
     pub needs_bool_filter: bool,
     pub needs_float_filter: bool,
+    pub needs_timestamp_filter: bool,
 }
 
 /// Generate all filter-related types for a package
@@ -29,6 +30,7 @@ pub struct FilterContext {
 pub fn generate_filters_for_package(
     file: &FileDescriptorProto,
     entities: &[&DescriptorProto],
+    all_files: &[FileDescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
     let mut files = Vec::new();
     let mut ctx = FilterContext::default();
@@ -51,6 +53,9 @@ pub fn generate_filters_for_package(
     if ctx.needs_float_filter {
         files.push(generate_float_filter(file)?);
     }
+    if ctx.needs_timestamp_filter {
+        files.push(generate_timestamp_filter(file)?);
+    }
 
     // Always generate OrderDirection enum (GraphQL wrapper for proto enum)
     files.push(generate_order_direction(file)?);
@@ -58,8 +63,8 @@ pub fn generate_filters_for_package(
     // Generate entity-specific filter and orderBy types (GraphQL wrappers)
     for entity in entities {
         let entity_name = entity.name.as_deref().unwrap_or("");
-        files.push(generate_entity_filter(file, entity, entity_name)?);
-        files.push(generate_entity_order_by(file, entity, entity_name)?);
+        files.push(generate_entity_filter(file, entity, entity_name, all_files)?);
+        files.push(generate_entity_order_by(file, entity, entity_name, all_files)?);
     }
 
     Ok(files)
@@ -83,6 +88,14 @@ fn analyze_entity_fields(entity: &DescriptorProto, ctx: &mut FilterContext) {
             Type::Float | Type::Double => {
                 ctx.needs_float_filter = true;
             }
+            Type::Message => {
+                // Check if this is a Timestamp type
+                if let Some(type_name) = &field.type_name {
+                    if type_name.contains("Timestamp") {
+                        ctx.needs_timestamp_filter = true;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -104,7 +117,7 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
             /// Equals
             pub eq: Option<i64>,
             /// Not equals
-            pub ne: Option<i64>,
+            pub neq: Option<i64>,
             /// Greater than
             pub gt: Option<i64>,
             /// Greater than or equal
@@ -116,18 +129,23 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
             /// In list
             #[graphql(name = "in")]
             pub r#in: Option<Vec<i64>>,
+            /// Is null check
+            pub is_null: Option<bool>,
         }
 
-        impl From<IntFilter> for super::super::IntFilter {
+        // Convert to proto type in synapse.relay package
+        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
+        impl From<IntFilter> for super::super::super::synapse::relay::IntFilter {
             fn from(f: IntFilter) -> Self {
                 Self {
                     eq: f.eq,
-                    ne: f.ne,
+                    neq: f.neq,
                     gt: f.gt,
                     gte: f.gte,
                     lt: f.lt,
                     lte: f.lte,
                     r#in: f.r#in.unwrap_or_default(),
+                    is_null: f.is_null,
                 }
             }
         }
@@ -139,8 +157,8 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/int_filter.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/int_filter.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -165,23 +183,50 @@ fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorE
             /// Equals
             pub eq: Option<String>,
             /// Not equals
-            pub ne: Option<String>,
-            /// Contains substring
-            pub contains: Option<String>,
+            pub neq: Option<String>,
+            /// Greater than
+            pub gt: Option<String>,
+            /// Greater than or equal
+            pub gte: Option<String>,
+            /// Less than
+            pub lt: Option<String>,
+            /// Less than or equal
+            pub lte: Option<String>,
+            /// In list
+            #[graphql(name = "in")]
+            pub r#in: Option<Vec<String>>,
+            /// SQL LIKE pattern
+            pub like: Option<String>,
+            /// Case-insensitive LIKE
+            pub ilike: Option<String>,
             /// Starts with
             pub starts_with: Option<String>,
             /// Ends with
             pub ends_with: Option<String>,
+            /// Contains substring
+            pub contains: Option<String>,
+            /// Is null check
+            pub is_null: Option<bool>,
         }
 
-        impl From<StringFilter> for super::super::StringFilter {
+        // Convert to proto type in synapse.relay package
+        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
+        impl From<StringFilter> for super::super::super::synapse::relay::StringFilter {
             fn from(f: StringFilter) -> Self {
                 Self {
                     eq: f.eq,
-                    ne: f.ne,
-                    contains: f.contains,
+                    neq: f.neq,
+                    gt: f.gt,
+                    gte: f.gte,
+                    lt: f.lt,
+                    lte: f.lte,
+                    r#in: f.r#in.unwrap_or_default(),
+                    like: f.like,
+                    ilike: f.ilike,
                     starts_with: f.starts_with,
                     ends_with: f.ends_with,
+                    contains: f.contains,
+                    is_null: f.is_null,
                 }
             }
         }
@@ -193,8 +238,8 @@ fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorE
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/string_filter.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/string_filter.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -218,11 +263,18 @@ fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErr
         pub struct BoolFilter {
             /// Equals
             pub eq: Option<bool>,
+            /// Is null check
+            pub is_null: Option<bool>,
         }
 
-        impl From<BoolFilter> for super::super::BoolFilter {
+        // Convert to proto type in synapse.relay package
+        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
+        impl From<BoolFilter> for super::super::super::synapse::relay::BoolFilter {
             fn from(f: BoolFilter) -> Self {
-                Self { eq: f.eq }
+                Self {
+                    eq: f.eq,
+                    is_null: f.is_null,
+                }
             }
         }
     };
@@ -233,8 +285,8 @@ fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErr
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/bool_filter.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/bool_filter.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -277,8 +329,70 @@ fn generate_float_filter(file: &FileDescriptorProto) -> Result<File, GeneratorEr
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/float_filter.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/float_filter.rs", package.replace('.', "/"));
+
+    Ok(File {
+        name: Some(output_path),
+        content: Some(formatted),
+        ..Default::default()
+    })
+}
+
+/// Generate TimestampFilter type
+fn generate_timestamp_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+    let code = quote! {
+        //! Auto-generated TimestampFilter type
+        //! @generated
+
+        #![allow(missing_docs)]
+
+        use async_graphql::InputObject;
+
+        /// Filter for timestamp fields (using seconds since Unix epoch)
+        #[derive(InputObject, Default, Clone)]
+        pub struct TimestampFilter {
+            /// Equals (seconds since Unix epoch)
+            pub eq: Option<i64>,
+            /// Not equals (seconds since Unix epoch)
+            pub neq: Option<i64>,
+            /// Greater than (seconds since Unix epoch)
+            pub gt: Option<i64>,
+            /// Greater than or equal (seconds since Unix epoch)
+            pub gte: Option<i64>,
+            /// Less than (seconds since Unix epoch)
+            pub lt: Option<i64>,
+            /// Less than or equal (seconds since Unix epoch)
+            pub lte: Option<i64>,
+            /// Is null check
+            pub is_null: Option<bool>,
+        }
+
+        // Convert to proto type in synapse.relay package
+        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
+        impl From<TimestampFilter> for super::super::super::synapse::relay::TimestampFilter {
+            fn from(f: TimestampFilter) -> Self {
+                Self {
+                    eq: f.eq.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    neq: f.neq.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    gt: f.gt.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    gte: f.gte.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    lt: f.lt.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    lte: f.lte.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
+                    is_null: f.is_null,
+                }
+            }
+        }
+    };
+
+    let content = code.to_string();
+    let formatted = match syn::parse_file(&content) {
+        Ok(parsed) => prettyplease::unparse(&parsed),
+        Err(_) => content,
+    };
+
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/timestamp_filter.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -333,8 +447,8 @@ fn generate_order_direction(file: &FileDescriptorProto) -> Result<File, Generato
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(".proto", "/graphql/order_direction.rs");
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!("{}/graphql/order_direction.rs", package.replace('.', "/"));
 
     Ok(File {
         name: Some(output_path),
@@ -350,6 +464,7 @@ fn generate_entity_filter(
     file: &FileDescriptorProto,
     entity: &DescriptorProto,
     entity_name: &str,
+    all_files: &[FileDescriptorProto],
 ) -> Result<File, GeneratorError> {
     let filter_name = format!("{}Filter", entity_name.to_upper_camel_case());
     let filter_ident = format_ident!("{}", filter_name);
@@ -357,10 +472,10 @@ fn generate_entity_filter(
     let mut field_tokens = Vec::new();
     let mut conversion_tokens = Vec::new();
 
-    // Check if proto defines this Filter type
-    let proto_filter = file
-        .message_type
+    // Check if proto defines this Filter type (search across all files including imports)
+    let proto_filter = all_files
         .iter()
+        .flat_map(|f| f.message_type.iter())
         .find(|m| m.name.as_deref() == Some(&filter_name));
 
     // Use proto fields if defined, otherwise derive from entity fields
@@ -370,9 +485,28 @@ fn generate_entity_filter(
         entity.field.iter().collect()
     };
 
+    // Track if we need logical operators (and, or, not)
+    let mut has_and = false;
+    let mut has_or = false;
+    let mut has_not = false;
+
     for field in fields_to_use {
         let field_name = field.name.as_deref().unwrap_or("");
         let field_ident = format_ident!("{}", field_name.to_snake_case());
+
+        // Handle logical operators specially - they reference the filter type itself
+        if field_name == "and" {
+            has_and = true;
+            continue;
+        }
+        if field_name == "or" {
+            has_or = true;
+            continue;
+        }
+        if field_name == "not" {
+            has_not = true;
+            continue;
+        }
 
         // Skip timestamp fields when using entity fields
         if proto_filter.is_none() {
@@ -424,6 +558,35 @@ fn generate_entity_filter(
         }
     }
 
+    // Add logical operators if present in proto
+    if has_and {
+        field_tokens.push(quote! {
+            /// All conditions must match
+            pub and: Option<Vec<Box<#filter_ident>>>,
+        });
+        conversion_tokens.push(quote! {
+            and: f.and.map(|v| v.into_iter().map(|f| (*f).into()).collect()).unwrap_or_default(),
+        });
+    }
+    if has_or {
+        field_tokens.push(quote! {
+            /// Any condition must match
+            pub or: Option<Vec<Box<#filter_ident>>>,
+        });
+        conversion_tokens.push(quote! {
+            or: f.or.map(|v| v.into_iter().map(|f| (*f).into()).collect()).unwrap_or_default(),
+        });
+    }
+    if has_not {
+        field_tokens.push(quote! {
+            /// Negate the condition
+            pub not: Option<Box<#filter_ident>>,
+        });
+        conversion_tokens.push(quote! {
+            not: f.not.map(|f| Box::new((*f).into())),
+        });
+    }
+
     let code = quote! {
         //! Auto-generated filter type for entity
         //! @generated
@@ -431,7 +594,7 @@ fn generate_entity_filter(
         #![allow(missing_docs)]
 
         use async_graphql::InputObject;
-        use super::{IntFilter, StringFilter, BoolFilter};
+        use super::{IntFilter, StringFilter, BoolFilter, TimestampFilter};
 
         /// Filter for entity queries
         #[derive(InputObject, Default, Clone)]
@@ -454,10 +617,11 @@ fn generate_entity_filter(
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_filter.rs", entity_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_filter.rs",
+        package.replace('.', "/"),
+        entity_name.to_snake_case()
     );
 
     Ok(File {
@@ -474,6 +638,7 @@ fn generate_entity_order_by(
     file: &FileDescriptorProto,
     entity: &DescriptorProto,
     entity_name: &str,
+    all_files: &[FileDescriptorProto],
 ) -> Result<File, GeneratorError> {
     let order_by_name = format!("{}OrderBy", entity_name.to_upper_camel_case());
     let order_by_ident = format_ident!("{}", order_by_name);
@@ -481,10 +646,10 @@ fn generate_entity_order_by(
     let mut field_tokens = Vec::new();
     let mut conversion_tokens = Vec::new();
 
-    // Check if proto defines this OrderBy type
-    let proto_order_by = file
-        .message_type
+    // Check if proto defines this OrderBy type (search across all files including imports)
+    let proto_order_by = all_files
         .iter()
+        .flat_map(|f| f.message_type.iter())
         .find(|m| m.name.as_deref() == Some(&order_by_name));
 
     // Use proto fields if defined, otherwise derive from entity fields
@@ -558,10 +723,11 @@ fn generate_entity_order_by(
         Err(_) => content,
     };
 
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path = proto_path.replace(
-        ".proto",
-        &format!("/graphql/{}_order_by.rs", entity_name.to_snake_case()),
+    let package = file.package.as_deref().unwrap_or("");
+    let output_path = format!(
+        "{}/graphql/{}_order_by.rs",
+        package.replace('.', "/"),
+        entity_name.to_snake_case()
     );
 
     Ok(File {
