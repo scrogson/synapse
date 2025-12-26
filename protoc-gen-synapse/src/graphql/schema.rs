@@ -13,18 +13,23 @@ use prost_types::compiler::code_generator_response::File;
 use prost_types::FileDescriptorProto;
 use quote::{format_ident, quote};
 
+/// Check if a message type exists in the file
+fn message_exists(file: &FileDescriptorProto, name: &str) -> bool {
+    file.message_type
+        .iter()
+        .any(|m| m.name.as_deref() == Some(name))
+}
+
 /// Collect information about all generated types for the schema
 pub struct SchemaInfo {
     /// Entity types (message name -> snake_case module name)
     pub entities: Vec<(String, String)>,
     /// Input types (message name -> snake_case module name)
     pub input_types: Vec<(String, String)>,
-    /// Filter types (message name -> snake_case module name)
-    pub filter_types: Vec<(String, String)>,
-    /// OrderBy types (message name -> snake_case module name)
-    pub order_by_types: Vec<(String, String)>,
     /// Services (service name)
     pub services: Vec<String>,
+    /// Whether we have auto-generated filters
+    pub has_auto_filters: bool,
 }
 
 /// Collect schema information from a file descriptor
@@ -33,9 +38,8 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
     let mut info = SchemaInfo {
         entities: Vec::new(),
         input_types: Vec::new(),
-        filter_types: Vec::new(),
-        order_by_types: Vec::new(),
         services: Vec::new(),
+        has_auto_filters: false,
     };
 
     for message in &file.message_type {
@@ -53,14 +57,12 @@ pub fn collect_schema_info(file: &FileDescriptorProto) -> SchemaInfo {
 
         // Categorize by type
         if graphql_opts.as_ref().is_some_and(|o| o.input_type) {
+            // Include input types (including proto-defined Filter/OrderBy types)
             info.input_types.push((msg_name.to_string(), snake_name));
-        } else if msg_name.ends_with("Filter") {
-            info.filter_types.push((msg_name.to_string(), snake_name));
-        } else if msg_name.ends_with("OrderBy") {
-            info.order_by_types.push((msg_name.to_string(), snake_name));
         } else if entity_opts.is_some() {
-            // It's an entity with a table
+            // It's an entity with a table - filters may be auto-generated
             info.entities.push((msg_name.to_string(), snake_name));
+            info.has_auto_filters = true;
         }
     }
 
@@ -91,32 +93,73 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
     let mut mod_declarations = Vec::new();
     let mut pub_uses = Vec::new();
 
-    // Entity modules
+    // Primitive filter modules - auto-generate if not in proto, otherwise object.rs generates wrapper
+    if info.has_auto_filters {
+        // IntFilter
+        if !message_exists(file, "IntFilter") {
+            mod_declarations.push(quote! { mod int_filter; });
+            pub_uses.push(quote! { pub use int_filter::IntFilter; });
+        }
+        // StringFilter
+        if !message_exists(file, "StringFilter") {
+            mod_declarations.push(quote! { mod string_filter; });
+            pub_uses.push(quote! { pub use string_filter::StringFilter; });
+        }
+        // BoolFilter
+        if !message_exists(file, "BoolFilter") {
+            mod_declarations.push(quote! { mod bool_filter; });
+            pub_uses.push(quote! { pub use bool_filter::BoolFilter; });
+        }
+        // OrderDirection (always auto-generated)
+        mod_declarations.push(quote! { mod order_direction; });
+        pub_uses.push(quote! { pub use order_direction::OrderDirection; });
+        // PageInfo (always auto-generated)
+        mod_declarations.push(quote! { mod page_info; });
+        pub_uses.push(quote! { pub use page_info::PageInfo; });
+    }
+
+    // Entity modules and their auto-generated types
     for (name, snake) in &info.entities {
         let mod_name = format_ident!("{}", snake);
         let type_name = format_ident!("{}", name);
         mod_declarations.push(quote! { mod #mod_name; });
         pub_uses.push(quote! { pub use #mod_name::#type_name; });
+
+        // Filter, orderBy, edge, connection for this entity
+        // Auto-generate if not in proto, otherwise object.rs generates wrapper
+        let filter_name = format!("{}Filter", name);
+        let order_by_name = format!("{}OrderBy", name);
+        let edge_name = format!("{}Edge", name);
+        let connection_name = format!("{}Connection", name);
+
+        if !message_exists(file, &filter_name) {
+            let filter_mod = format_ident!("{}_filter", snake);
+            let filter_type = format_ident!("{}", filter_name);
+            mod_declarations.push(quote! { mod #filter_mod; });
+            pub_uses.push(quote! { pub use #filter_mod::#filter_type; });
+        }
+
+        if !message_exists(file, &order_by_name) {
+            let order_by_mod = format_ident!("{}_order_by", snake);
+            let order_by_type = format_ident!("{}", order_by_name);
+            mod_declarations.push(quote! { mod #order_by_mod; });
+            pub_uses.push(quote! { pub use #order_by_mod::#order_by_type; });
+        }
+
+        // Edge and Connection (always auto-generated)
+        let edge_mod = format_ident!("{}_edge", snake);
+        let edge_type = format_ident!("{}", edge_name);
+        mod_declarations.push(quote! { mod #edge_mod; });
+        pub_uses.push(quote! { pub use #edge_mod::#edge_type; });
+
+        let connection_mod = format_ident!("{}_connection", snake);
+        let connection_type = format_ident!("{}", connection_name);
+        mod_declarations.push(quote! { mod #connection_mod; });
+        pub_uses.push(quote! { pub use #connection_mod::#connection_type; });
     }
 
-    // Input type modules
+    // User-defined input type modules
     for (name, snake) in &info.input_types {
-        let mod_name = format_ident!("{}", snake);
-        let type_name = format_ident!("{}", name);
-        mod_declarations.push(quote! { mod #mod_name; });
-        pub_uses.push(quote! { pub use #mod_name::#type_name; });
-    }
-
-    // Filter type modules
-    for (name, snake) in &info.filter_types {
-        let mod_name = format_ident!("{}", snake);
-        let type_name = format_ident!("{}", name);
-        mod_declarations.push(quote! { mod #mod_name; });
-        pub_uses.push(quote! { pub use #mod_name::#type_name; });
-    }
-
-    // OrderBy type modules
-    for (name, snake) in &info.order_by_types {
         let mod_name = format_ident!("{}", snake);
         let type_name = format_ident!("{}", name);
         mod_declarations.push(quote! { mod #mod_name; });
@@ -127,8 +170,6 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
     let mut query_imports = Vec::new();
     let mut mutation_imports = Vec::new();
     let mut storage_imports = Vec::new();
-    let mut storage_params = Vec::new();
-    let mut storage_data = Vec::new();
 
     for svc_name in &info.services {
         let svc_snake = svc_name.to_snake_case();
@@ -148,14 +189,8 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
 
         // Storage type
         let storage_type = format_ident!("SeaOrm{}Storage", svc_camel);
-        let storage_param = format_ident!("{}_storage", svc_snake);
         storage_imports.push(quote! { use super::#storage_type; });
-        storage_params.push(quote! { #storage_param: Arc<#storage_type> });
-        storage_data.push(quote! { .data(#storage_param) });
     }
-
-    // Generate Connection types for entities
-    let connection_types = generate_connection_types(&info.entities);
 
     // Generate the combined Query and Mutation
     let combined_query = generate_combined_query(&info.services);
@@ -188,9 +223,6 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
         use std::sync::Arc;
         #(#storage_imports)*
 
-        // Connection types
-        #connection_types
-
         // Combined Query
         #combined_query
 
@@ -217,107 +249,6 @@ pub fn generate(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorErr
         content: Some(formatted),
         ..Default::default()
     }))
-}
-
-/// Generate Connection types for all entities
-fn generate_connection_types(entities: &[(String, String)]) -> TokenStream {
-    let mut types = Vec::new();
-
-    // PageInfo is common
-    types.push(quote! {
-        /// Relay PageInfo
-        #[derive(async_graphql::SimpleObject, Clone, Default)]
-        pub struct PageInfo {
-            pub has_next_page: bool,
-            pub has_previous_page: bool,
-            pub start_cursor: Option<String>,
-            pub end_cursor: Option<String>,
-        }
-
-        impl From<super::PageInfo> for PageInfo {
-            fn from(p: super::PageInfo) -> Self {
-                Self {
-                    has_next_page: p.has_next_page,
-                    has_previous_page: p.has_previous_page,
-                    start_cursor: p.start_cursor,
-                    end_cursor: p.end_cursor,
-                }
-            }
-        }
-
-        /// Order direction for sorting
-        #[derive(async_graphql::Enum, Clone, Copy, PartialEq, Eq, Default)]
-        pub enum OrderDirection {
-            #[default]
-            /// Ascending order
-            Asc,
-            /// Descending order
-            Desc,
-        }
-
-        impl From<OrderDirection> for super::OrderDirection {
-            fn from(d: OrderDirection) -> Self {
-                match d {
-                    OrderDirection::Asc => Self::Asc,
-                    OrderDirection::Desc => Self::Desc,
-                }
-            }
-        }
-
-        impl From<super::OrderDirection> for OrderDirection {
-            fn from(d: super::OrderDirection) -> Self {
-                match d {
-                    super::OrderDirection::Asc => Self::Asc,
-                    super::OrderDirection::Desc => Self::Desc,
-                    _ => Self::Asc,
-                }
-            }
-        }
-    });
-
-    // Generate Edge and Connection for each entity
-    for (name, _) in entities {
-        let type_ident = format_ident!("{}", name);
-        let edge_ident = format_ident!("{}Edge", name);
-        let connection_ident = format_ident!("{}Connection", name);
-        let edge_doc = format!("Relay Edge for {}", name);
-        let connection_doc = format!("Relay Connection for {}", name);
-
-        types.push(quote! {
-            #[doc = #edge_doc]
-            #[derive(async_graphql::SimpleObject, Clone)]
-            pub struct #edge_ident {
-                pub cursor: String,
-                pub node: #type_ident,
-            }
-
-            #[doc = #connection_doc]
-            #[derive(async_graphql::SimpleObject, Clone)]
-            pub struct #connection_ident {
-                pub edges: Vec<#edge_ident>,
-                pub page_info: PageInfo,
-            }
-
-            impl From<super::#connection_ident> for #connection_ident {
-                fn from(c: super::#connection_ident) -> Self {
-                    Self {
-                        edges: c.edges.into_iter().map(|edge| {
-                            // Convert proto edge to graphql edge
-                            let node = edge.node.map(#type_ident::from)
-                                .expect("Edge node should not be None");
-                            #edge_ident {
-                                cursor: edge.cursor,
-                                node,
-                            }
-                        }).collect(),
-                        page_info: c.page_info.map(PageInfo::from).unwrap_or_default(),
-                    }
-                }
-            }
-        });
-    }
-
-    quote! { #(#types)* }
 }
 
 /// Generate combined Query using MergedObject

@@ -5,6 +5,7 @@
 
 use super::{entity, enum_gen, implementation, options, package};
 use crate::error::GeneratorError;
+use crate::storage::seaorm::options::get_cached_entity_options;
 use crate::{graphql, grpc, validate};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
@@ -24,8 +25,19 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
                 GeneratorError::CodeGenError(format!("File descriptor not found: {}", file_name))
             })?;
 
+        // Collect entities (messages with synapse.storage.entity option)
+        let mut entities = Vec::new();
+        let file_name = file_descriptor.name.as_deref().unwrap_or("");
+
         // Process each message in the file
         for message in &file_descriptor.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+
+            // Check if this is an entity
+            if get_cached_entity_options(file_name, msg_name).is_some() {
+                entities.push(message);
+            }
+
             // Generate entity if has entity options
             if let Some(generated) = entity::generate(file_descriptor, message)? {
                 files.push(generated);
@@ -40,6 +52,17 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             }
             // Generate DataLoaders for relations
             for generated in graphql::generate_dataloaders(file_descriptor, message)? {
+                files.push(generated);
+            }
+        }
+
+        // Generate auto-generated filter types for entities
+        if !entities.is_empty() {
+            let entity_refs: Vec<_> = entities.iter().map(|e| *e).collect();
+            for generated in graphql::generate_filters(file_descriptor, &entity_refs)? {
+                files.push(generated);
+            }
+            for generated in graphql::generate_connections(file_descriptor, &entity_refs)? {
                 files.push(generated);
             }
         }

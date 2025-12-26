@@ -7,9 +7,12 @@
 //! - DataLoader integration for N+1 prevention
 //! - Relay Node interface and connections
 //! - Combined schema with Query/Mutation/Subscription
+//! - Auto-generated filter types (IntFilter, StringFilter, etc.)
+//! - Auto-generated connection types (PageInfo, Edge, Connection)
 
 mod connection;
 mod dataloader;
+mod filter;
 mod node;
 mod object;
 mod resolver;
@@ -63,4 +66,31 @@ pub fn generate_dataloaders(
 #[allow(dead_code)]
 pub fn generate_schema(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
     schema::generate(file)
+}
+
+/// Generate auto-generated filter types for entities in a package
+///
+/// Creates:
+/// - Primitive filters (IntFilter, StringFilter, BoolFilter)
+/// - Entity-specific filters (UserFilter, PostFilter)
+/// - Entity-specific order by types (UserOrderBy, PostOrderBy)
+/// - OrderDirection enum
+pub fn generate_filters(
+    file: &FileDescriptorProto,
+    entities: &[&DescriptorProto],
+) -> Result<Vec<File>, GeneratorError> {
+    filter::generate_filters_for_package(file, entities)
+}
+
+/// Generate auto-generated Relay connection types for entities in a package
+///
+/// Creates:
+/// - PageInfo type
+/// - Entity Edge types (UserEdge, PostEdge)
+/// - Entity Connection types (UserConnection, PostConnection)
+pub fn generate_connections(
+    file: &FileDescriptorProto,
+    entities: &[&DescriptorProto],
+) -> Result<Vec<File>, GeneratorError> {
+    connection::generate_connections_for_package(file, entities)
 }

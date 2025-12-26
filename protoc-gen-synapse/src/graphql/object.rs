@@ -23,6 +23,10 @@ pub fn generate(
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
+    // Note: Filter, OrderBy, Edge, Connection types defined in proto are processed here
+    // (they need GraphQL wrappers). filter.rs and connection.rs only auto-generate types
+    // that are NOT already defined in proto.
+
     // Check for graphql message options
     let msg_opts = get_cached_graphql_message_options(file_name, msg_name);
 
@@ -160,20 +164,32 @@ fn generate_input_type(
     // Generate struct fields for input type
     let struct_fields = generate_input_fields(file_name, msg_name, &message.field)?;
 
-    // Check if this type is one of the primitive filter types (to avoid self-import)
-    let is_primitive_filter = matches!(
-        type_name.as_str(),
-        "IntFilter" | "Int64Filter" | "Int32Filter" | "StringFilter" | "BoolFilter" | "FloatFilter" | "DoubleFilter"
-    );
+    // Collect types referenced by fields and import them from parent module
+    let mut referenced_types = std::collections::HashSet::new();
+    for field in &message.field {
+        if let Some(type_name) = &field.type_name {
+            let simple_name = type_name.rsplit('.').next().unwrap_or(type_name);
+            // Skip well-known types like Timestamp
+            if !simple_name.contains("Timestamp") {
+                referenced_types.insert(simple_name.to_string());
+            }
+        }
+    }
 
-    // Only import filter types if this isn't itself a primitive filter type
-    let filter_imports = if is_primitive_filter {
+    // Generate imports for referenced types
+    let type_imports: Vec<_> = referenced_types
+        .iter()
+        .map(|t| {
+            let ident = format_ident!("{}", t);
+            quote! { #ident }
+        })
+        .collect();
+
+    let filter_imports = if type_imports.is_empty() {
         quote! {}
     } else {
         quote! {
-            // Import common types from graphql module
-            #[allow(unused_imports)]
-            use super::{IntFilter, StringFilter, BoolFilter, OrderDirection};
+            use super::{#(#type_imports),*};
         }
     };
 
@@ -480,26 +496,15 @@ fn generate_input_from_impl(
         let is_enum = matches!(proto_type, Type::Enum);
 
         let conversion = if is_enum && is_optional {
-            // Optional enum: convert to i32 via super::super:: proto enum
-            let enum_name = field
-                .type_name
-                .as_ref()
-                .map(|t| t.rsplit('.').next().unwrap_or(t))
-                .unwrap_or("");
-            let enum_ident = format_ident!("{}", enum_name.to_upper_camel_case());
+            // Optional enum: convert to i32 via From<EnumType> for i32
+            // The GraphQL enum type implements From<EnumType> for i32
             quote! {
-                #rust_name: input.#rust_name.map(|e| super::super::#enum_ident::from(e) as i32),
+                #rust_name: input.#rust_name.map(|e| i32::from(e)),
             }
         } else if is_enum {
-            // Required enum: convert to i32 via super::super:: proto enum
-            let enum_name = field
-                .type_name
-                .as_ref()
-                .map(|t| t.rsplit('.').next().unwrap_or(t))
-                .unwrap_or("");
-            let enum_ident = format_ident!("{}", enum_name.to_upper_camel_case());
+            // Required enum: convert to i32 via From<EnumType> for i32
             quote! {
-                #rust_name: super::super::#enum_ident::from(input.#rust_name) as i32,
+                #rust_name: i32::from(input.#rust_name),
             }
         } else if is_message && is_optional {
             // Optional nested type: .map(Into::into)
