@@ -269,7 +269,7 @@ impl ApplyUpdate<UpdatePostInput> for post::ActiveModel {
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 
-use async_graphql::{Object, Context, Result, ID, InputObject, SimpleObject, EmptySubscription, Schema};
+use async_graphql::{Object, Context, Result, ID, InputObject, SimpleObject, EmptySubscription, Schema, Enum};
 use super::user_service_storage::{UserServiceStorage, StorageError as UserStorageError};
 use super::post_service_storage::{PostServiceStorage, StorageError as PostStorageError};
 use super::sea_orm_user_service_storage::SeaOrmUserServiceStorage;
@@ -291,6 +291,15 @@ use super::{
     UpdatePostRequest, UpdatePostInput as ProtoUpdatePostInput, UpdatePostResponse,
     DeletePostRequest, DeletePostResponse,
     PageInfo as ProtoPageInfo,
+    // Filter types
+    StringFilter as ProtoStringFilter,
+    BoolFilter as ProtoBoolFilter,
+    Int64Filter as ProtoInt64Filter,
+    UserFilter as ProtoUserFilter,
+    PostFilter as ProtoPostFilter,
+    UserOrderBy as ProtoUserOrderBy,
+    PostOrderBy as ProtoPostOrderBy,
+    OrderDirection as ProtoOrderDirection,
 };
 
 // ============================================================================
@@ -401,6 +410,174 @@ pub struct PostConnection {
 }
 
 // ============================================================================
+// Filter & OrderBy Types
+// ============================================================================
+
+/// Sort direction
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Default)]
+pub enum OrderDirection {
+    #[default]
+    ASC,
+    DESC,
+}
+
+impl From<OrderDirection> for ProtoOrderDirection {
+    fn from(dir: OrderDirection) -> Self {
+        match dir {
+            OrderDirection::ASC => ProtoOrderDirection::Asc,
+            OrderDirection::DESC => ProtoOrderDirection::Desc,
+        }
+    }
+}
+
+/// String comparison filter
+#[derive(InputObject, Default)]
+pub struct StringFilter {
+    pub eq: Option<String>,
+    pub ne: Option<String>,
+    pub contains: Option<String>,
+    pub starts_with: Option<String>,
+    pub ends_with: Option<String>,
+}
+
+impl From<StringFilter> for ProtoStringFilter {
+    fn from(f: StringFilter) -> Self {
+        Self {
+            eq: f.eq,
+            ne: f.ne,
+            contains: f.contains,
+            starts_with: f.starts_with,
+            ends_with: f.ends_with,
+        }
+    }
+}
+
+/// Boolean comparison filter
+#[derive(InputObject, Default)]
+pub struct BoolFilter {
+    pub eq: Option<bool>,
+}
+
+impl From<BoolFilter> for ProtoBoolFilter {
+    fn from(f: BoolFilter) -> Self {
+        Self { eq: f.eq }
+    }
+}
+
+/// Int64 comparison filter
+#[derive(InputObject, Default)]
+pub struct Int64Filter {
+    pub eq: Option<i64>,
+    pub ne: Option<i64>,
+    pub gt: Option<i64>,
+    pub gte: Option<i64>,
+    pub lt: Option<i64>,
+    pub lte: Option<i64>,
+    #[graphql(name = "in")]
+    pub in_: Option<Vec<i64>>,
+}
+
+impl From<Int64Filter> for ProtoInt64Filter {
+    fn from(f: Int64Filter) -> Self {
+        Self {
+            eq: f.eq,
+            ne: f.ne,
+            gt: f.gt,
+            gte: f.gte,
+            lt: f.lt,
+            lte: f.lte,
+            r#in: f.in_.unwrap_or_default(),
+        }
+    }
+}
+
+/// User filter
+#[derive(InputObject, Default)]
+pub struct UserFilter {
+    pub id: Option<Int64Filter>,
+    pub email: Option<StringFilter>,
+    pub name: Option<StringFilter>,
+    pub bio: Option<StringFilter>,
+}
+
+impl From<UserFilter> for ProtoUserFilter {
+    fn from(f: UserFilter) -> Self {
+        Self {
+            id: f.id.map(Into::into),
+            email: f.email.map(Into::into),
+            name: f.name.map(Into::into),
+            bio: f.bio.map(Into::into),
+        }
+    }
+}
+
+/// User order by
+#[derive(InputObject, Default)]
+pub struct UserOrderBy {
+    pub id: Option<OrderDirection>,
+    pub email: Option<OrderDirection>,
+    pub name: Option<OrderDirection>,
+    pub created_at: Option<OrderDirection>,
+    pub updated_at: Option<OrderDirection>,
+}
+
+impl From<UserOrderBy> for ProtoUserOrderBy {
+    fn from(o: UserOrderBy) -> Self {
+        Self {
+            id: o.id.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            email: o.email.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            name: o.name.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            created_at: o.created_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            updated_at: o.updated_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+        }
+    }
+}
+
+/// Post filter
+#[derive(InputObject, Default)]
+pub struct PostFilter {
+    pub id: Option<Int64Filter>,
+    pub title: Option<StringFilter>,
+    pub content: Option<StringFilter>,
+    pub published: Option<BoolFilter>,
+    pub author_id: Option<Int64Filter>,
+}
+
+impl From<PostFilter> for ProtoPostFilter {
+    fn from(f: PostFilter) -> Self {
+        Self {
+            id: f.id.map(Into::into),
+            title: f.title.map(Into::into),
+            content: f.content.map(Into::into),
+            published: f.published.map(Into::into),
+            author_id: f.author_id.map(Into::into),
+        }
+    }
+}
+
+/// Post order by
+#[derive(InputObject, Default)]
+pub struct PostOrderBy {
+    pub id: Option<OrderDirection>,
+    pub title: Option<OrderDirection>,
+    pub published: Option<OrderDirection>,
+    pub created_at: Option<OrderDirection>,
+    pub updated_at: Option<OrderDirection>,
+}
+
+impl From<PostOrderBy> for ProtoPostOrderBy {
+    fn from(o: PostOrderBy) -> Self {
+        Self {
+            id: o.id.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            title: o.title.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            published: o.published.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            created_at: o.created_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            updated_at: o.updated_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+        }
+    }
+}
+
+// ============================================================================
 // Input Types
 // ============================================================================
 
@@ -452,7 +629,7 @@ impl Query {
         }
     }
 
-    /// List users with Relay-style pagination
+    /// List users with Relay-style pagination, filtering, and ordering
     async fn users(
         &self,
         ctx: &Context<'_>,
@@ -460,9 +637,18 @@ impl Query {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<UserFilter>,
+        order_by: Option<UserOrderBy>,
     ) -> Result<UserConnection> {
         let storage = ctx.data_unchecked::<Arc<SeaOrmUserServiceStorage>>();
-        let request = ListUsersRequest { after, before, first, last };
+        let request = ListUsersRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: filter.map(Into::into),
+            order_by: order_by.map(Into::into),
+        };
         let response = storage.list_users(request).await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -506,7 +692,7 @@ impl Query {
         }
     }
 
-    /// List posts with Relay-style pagination
+    /// List posts with Relay-style pagination, filtering, and ordering
     async fn posts(
         &self,
         ctx: &Context<'_>,
@@ -514,9 +700,18 @@ impl Query {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<PostFilter>,
+        order_by: Option<PostOrderBy>,
     ) -> Result<PostConnection> {
         let storage = ctx.data_unchecked::<Arc<SeaOrmPostServiceStorage>>();
-        let request = ListPostsRequest { after, before, first, last };
+        let request = ListPostsRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: filter.map(Into::into),
+            order_by: order_by.map(Into::into),
+        };
         let response = storage.list_posts(request).await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -659,6 +854,247 @@ pub fn build_schema(
 "#;
 
     std::fs::write(blog_dir.join("graphql_schema.rs"), graphql_schema_content)?;
+
+    // Override the generated storage implementations with filter/orderBy support
+    let user_storage_impl = r#"//!SeaORM-based storage implementation for UserService
+//! This file is manually generated by build.rs to add filter/orderBy support.
+#![allow(missing_docs)]
+#![allow(unused_imports)]
+use super::prelude::*;
+use super::user_service_storage::{UserServiceStorage, StorageError};
+use super::conversions::ApplyUpdate;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, Set, Condition,
+};
+
+#[derive(Clone)]
+pub struct SeaOrmUserServiceStorage {
+    db: DatabaseConnection,
+}
+
+impl SeaOrmUserServiceStorage {
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self { db }
+    }
+    pub fn db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+}
+
+#[async_trait::async_trait]
+impl UserServiceStorage for SeaOrmUserServiceStorage {
+    async fn get_user(&self, request: GetUserRequest) -> Result<GetUserResponse, StorageError> {
+        let model = user::Entity::find_by_id(request.id)
+            .one(&self.db).await.map_err(StorageError::Database)?
+            .ok_or_else(|| StorageError::NotFound(format!("User {} not found", request.id)))?;
+        Ok(GetUserResponse { user: Some(model.into()) })
+    }
+
+    async fn list_users(&self, request: ListUsersRequest) -> Result<UserConnection, StorageError> {
+        use sea_orm::QuerySelect;
+        let limit = request.first.or(request.last).unwrap_or(20) as u64;
+        let mut query = user::Entity::find();
+
+        // Apply filters
+        if let Some(ref filter) = request.filter {
+            let mut cond = Condition::all();
+            if let Some(ref f) = filter.id {
+                if let Some(v) = f.eq { cond = cond.add(user::Column::Id.eq(v)); }
+                if let Some(v) = f.ne { cond = cond.add(user::Column::Id.ne(v)); }
+                if let Some(v) = f.gt { cond = cond.add(user::Column::Id.gt(v)); }
+                if let Some(v) = f.gte { cond = cond.add(user::Column::Id.gte(v)); }
+                if let Some(v) = f.lt { cond = cond.add(user::Column::Id.lt(v)); }
+                if let Some(v) = f.lte { cond = cond.add(user::Column::Id.lte(v)); }
+                if !f.r#in.is_empty() { cond = cond.add(user::Column::Id.is_in(f.r#in.clone())); }
+            }
+            if let Some(ref f) = filter.email {
+                if let Some(ref v) = f.eq { cond = cond.add(user::Column::Email.eq(v.clone())); }
+                if let Some(ref v) = f.contains { cond = cond.add(user::Column::Email.contains(v)); }
+                if let Some(ref v) = f.starts_with { cond = cond.add(user::Column::Email.starts_with(v)); }
+            }
+            if let Some(ref f) = filter.name {
+                if let Some(ref v) = f.eq { cond = cond.add(user::Column::Name.eq(v.clone())); }
+                if let Some(ref v) = f.contains { cond = cond.add(user::Column::Name.contains(v)); }
+            }
+            query = query.filter(cond);
+        }
+
+        // Apply ordering
+        let mut ordered = false;
+        if let Some(ref o) = request.order_by {
+            if let Some(d) = o.id { ordered = true; query = if d == 1 { query.order_by_asc(user::Column::Id) } else { query.order_by_desc(user::Column::Id) }; }
+            if let Some(d) = o.email { ordered = true; query = if d == 1 { query.order_by_asc(user::Column::Email) } else { query.order_by_desc(user::Column::Email) }; }
+            if let Some(d) = o.name { ordered = true; query = if d == 1 { query.order_by_asc(user::Column::Name) } else { query.order_by_desc(user::Column::Name) }; }
+            if let Some(d) = o.created_at { ordered = true; query = if d == 1 { query.order_by_asc(user::Column::CreatedAt) } else { query.order_by_desc(user::Column::CreatedAt) }; }
+            if let Some(d) = o.updated_at { ordered = true; query = if d == 1 { query.order_by_asc(user::Column::UpdatedAt) } else { query.order_by_desc(user::Column::UpdatedAt) }; }
+        }
+        if !ordered { query = query.order_by_asc(user::Column::Id); }
+
+        // Cursor pagination
+        if let Some(ref after) = request.after {
+            if let Ok(id) = after.parse::<i64>() { query = query.filter(user::Column::Id.gt(id)); }
+        }
+        if let Some(ref before) = request.before {
+            if let Ok(id) = before.parse::<i64>() { query = query.filter(user::Column::Id.lt(id)); }
+        }
+
+        let models = query.limit(limit + 1).all(&self.db).await.map_err(StorageError::Database)?;
+        let has_next = models.len() > limit as usize;
+        let models: Vec<_> = models.into_iter().take(limit as usize).collect();
+        let edges: Vec<UserEdge> = models.into_iter().map(|m| UserEdge { cursor: m.id.to_string(), node: Some(m.into()) }).collect();
+        let start = edges.first().map(|e| e.cursor.clone());
+        let end = edges.last().map(|e| e.cursor.clone());
+        Ok(UserConnection { edges, page_info: Some(PageInfo { has_next_page: has_next, has_previous_page: request.after.is_some(), start_cursor: start, end_cursor: end }) })
+    }
+
+    async fn create_user(&self, request: CreateUserRequest) -> Result<CreateUserResponse, StorageError> {
+        let input = request.input.ok_or_else(|| StorageError::InvalidArgument("input required".into()))?;
+        let active_model: user::ActiveModel = input.into();
+        let model = active_model.insert(&self.db).await.map_err(StorageError::Database)?;
+        Ok(CreateUserResponse { user: Some(model.into()) })
+    }
+
+    async fn update_user(&self, request: UpdateUserRequest) -> Result<UpdateUserResponse, StorageError> {
+        use sea_orm::IntoActiveModel;
+        let input = request.input.ok_or_else(|| StorageError::InvalidArgument("input required".into()))?;
+        let model = user::Entity::find_by_id(request.id).one(&self.db).await.map_err(StorageError::Database)?
+            .ok_or_else(|| StorageError::NotFound(format!("User {} not found", request.id)))?;
+        let mut am = model.into_active_model();
+        am.apply_update(input);
+        let model = am.update(&self.db).await.map_err(StorageError::Database)?;
+        Ok(UpdateUserResponse { user: Some(model.into()) })
+    }
+
+    async fn delete_user(&self, request: DeleteUserRequest) -> Result<DeleteUserResponse, StorageError> {
+        let result = user::Entity::delete_by_id(request.id).exec(&self.db).await.map_err(StorageError::Database)?;
+        Ok(DeleteUserResponse { success: result.rows_affected > 0 })
+    }
+}
+"#;
+
+    let post_storage_impl = r#"//!SeaORM-based storage implementation for PostService
+//! This file is manually generated by build.rs to add filter/orderBy support.
+#![allow(missing_docs)]
+#![allow(unused_imports)]
+use super::prelude::*;
+use super::post_service_storage::{PostServiceStorage, StorageError};
+use super::conversions::ApplyUpdate;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
+    QueryOrder, Set, Condition,
+};
+
+#[derive(Clone)]
+pub struct SeaOrmPostServiceStorage {
+    db: DatabaseConnection,
+}
+
+impl SeaOrmPostServiceStorage {
+    pub fn new(db: DatabaseConnection) -> Self {
+        Self { db }
+    }
+    pub fn db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+}
+
+#[async_trait::async_trait]
+impl PostServiceStorage for SeaOrmPostServiceStorage {
+    async fn get_post(&self, request: GetPostRequest) -> Result<GetPostResponse, StorageError> {
+        let model = post::Entity::find_by_id(request.id)
+            .one(&self.db).await.map_err(StorageError::Database)?
+            .ok_or_else(|| StorageError::NotFound(format!("Post {} not found", request.id)))?;
+        Ok(GetPostResponse { post: Some(model.into()) })
+    }
+
+    async fn list_posts(&self, request: ListPostsRequest) -> Result<PostConnection, StorageError> {
+        use sea_orm::QuerySelect;
+        let limit = request.first.or(request.last).unwrap_or(20) as u64;
+        let mut query = post::Entity::find();
+
+        // Apply filters
+        if let Some(ref filter) = request.filter {
+            let mut cond = Condition::all();
+            if let Some(ref f) = filter.id {
+                if let Some(v) = f.eq { cond = cond.add(post::Column::Id.eq(v)); }
+                if let Some(v) = f.ne { cond = cond.add(post::Column::Id.ne(v)); }
+                if let Some(v) = f.gt { cond = cond.add(post::Column::Id.gt(v)); }
+                if !f.r#in.is_empty() { cond = cond.add(post::Column::Id.is_in(f.r#in.clone())); }
+            }
+            if let Some(ref f) = filter.title {
+                if let Some(ref v) = f.eq { cond = cond.add(post::Column::Title.eq(v.clone())); }
+                if let Some(ref v) = f.contains { cond = cond.add(post::Column::Title.contains(v)); }
+            }
+            if let Some(ref f) = filter.content {
+                if let Some(ref v) = f.contains { cond = cond.add(post::Column::Content.contains(v)); }
+            }
+            if let Some(ref f) = filter.published {
+                if let Some(v) = f.eq { cond = cond.add(post::Column::Published.eq(v)); }
+            }
+            if let Some(ref f) = filter.author_id {
+                if let Some(v) = f.eq { cond = cond.add(post::Column::AuthorId.eq(v)); }
+                if !f.r#in.is_empty() { cond = cond.add(post::Column::AuthorId.is_in(f.r#in.clone())); }
+            }
+            query = query.filter(cond);
+        }
+
+        // Apply ordering
+        let mut ordered = false;
+        if let Some(ref o) = request.order_by {
+            if let Some(d) = o.id { ordered = true; query = if d == 1 { query.order_by_asc(post::Column::Id) } else { query.order_by_desc(post::Column::Id) }; }
+            if let Some(d) = o.title { ordered = true; query = if d == 1 { query.order_by_asc(post::Column::Title) } else { query.order_by_desc(post::Column::Title) }; }
+            if let Some(d) = o.published { ordered = true; query = if d == 1 { query.order_by_asc(post::Column::Published) } else { query.order_by_desc(post::Column::Published) }; }
+            if let Some(d) = o.created_at { ordered = true; query = if d == 1 { query.order_by_asc(post::Column::CreatedAt) } else { query.order_by_desc(post::Column::CreatedAt) }; }
+            if let Some(d) = o.updated_at { ordered = true; query = if d == 1 { query.order_by_asc(post::Column::UpdatedAt) } else { query.order_by_desc(post::Column::UpdatedAt) }; }
+        }
+        if !ordered { query = query.order_by_asc(post::Column::Id); }
+
+        // Cursor pagination
+        if let Some(ref after) = request.after {
+            if let Ok(id) = after.parse::<i64>() { query = query.filter(post::Column::Id.gt(id)); }
+        }
+        if let Some(ref before) = request.before {
+            if let Ok(id) = before.parse::<i64>() { query = query.filter(post::Column::Id.lt(id)); }
+        }
+
+        let models = query.limit(limit + 1).all(&self.db).await.map_err(StorageError::Database)?;
+        let has_next = models.len() > limit as usize;
+        let models: Vec<_> = models.into_iter().take(limit as usize).collect();
+        let edges: Vec<PostEdge> = models.into_iter().map(|m| PostEdge { cursor: m.id.to_string(), node: Some(m.into()) }).collect();
+        let start = edges.first().map(|e| e.cursor.clone());
+        let end = edges.last().map(|e| e.cursor.clone());
+        Ok(PostConnection { edges, page_info: Some(PageInfo { has_next_page: has_next, has_previous_page: request.after.is_some(), start_cursor: start, end_cursor: end }) })
+    }
+
+    async fn create_post(&self, request: CreatePostRequest) -> Result<CreatePostResponse, StorageError> {
+        let input = request.input.ok_or_else(|| StorageError::InvalidArgument("input required".into()))?;
+        let active_model: post::ActiveModel = input.into();
+        let model = active_model.insert(&self.db).await.map_err(StorageError::Database)?;
+        Ok(CreatePostResponse { post: Some(model.into()) })
+    }
+
+    async fn update_post(&self, request: UpdatePostRequest) -> Result<UpdatePostResponse, StorageError> {
+        use sea_orm::IntoActiveModel;
+        let input = request.input.ok_or_else(|| StorageError::InvalidArgument("input required".into()))?;
+        let model = post::Entity::find_by_id(request.id).one(&self.db).await.map_err(StorageError::Database)?
+            .ok_or_else(|| StorageError::NotFound(format!("Post {} not found", request.id)))?;
+        let mut am = model.into_active_model();
+        am.apply_update(input);
+        let model = am.update(&self.db).await.map_err(StorageError::Database)?;
+        Ok(UpdatePostResponse { post: Some(model.into()) })
+    }
+
+    async fn delete_post(&self, request: DeletePostRequest) -> Result<DeletePostResponse, StorageError> {
+        let result = post::Entity::delete_by_id(request.id).exec(&self.db).await.map_err(StorageError::Database)?;
+        Ok(DeletePostResponse { success: result.rows_affected > 0 })
+    }
+}
+"#;
+
+    // Write storage implementations (overwrites protoc-gen-synapse output)
+    std::fs::write(blog_dir.join("sea_orm_user_service_storage.rs"), user_storage_impl)?;
+    std::fs::write(blog_dir.join("sea_orm_post_service_storage.rs"), post_storage_impl)?;
 
     Ok(())
 }

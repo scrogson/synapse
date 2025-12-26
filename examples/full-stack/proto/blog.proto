@@ -167,6 +167,90 @@ message PostConnection {
 }
 
 // =============================================================================
+// Filter & OrderBy Types
+// =============================================================================
+
+// String comparison operators
+message StringFilter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional string eq = 1;        // equals
+  optional string ne = 2;        // not equals
+  optional string contains = 3;  // contains substring
+  optional string starts_with = 4;
+  optional string ends_with = 5;
+}
+
+// Boolean comparison
+message BoolFilter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional bool eq = 1;
+}
+
+// Int64 comparison operators
+message Int64Filter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional int64 eq = 1;
+  optional int64 ne = 2;
+  optional int64 gt = 3;
+  optional int64 gte = 4;
+  optional int64 lt = 5;
+  optional int64 lte = 6;
+  repeated int64 in = 7;
+}
+
+enum OrderDirection {
+  ORDER_DIRECTION_UNSPECIFIED = 0;
+  ASC = 1;
+  DESC = 2;
+}
+
+// User filter
+message UserFilter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional Int64Filter id = 1;
+  optional StringFilter email = 2;
+  optional StringFilter name = 3;
+  optional StringFilter bio = 4;
+}
+
+// User order by
+message UserOrderBy {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional OrderDirection id = 1;
+  optional OrderDirection email = 2;
+  optional OrderDirection name = 3;
+  optional OrderDirection created_at = 4;
+  optional OrderDirection updated_at = 5;
+}
+
+// Post filter
+message PostFilter {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional Int64Filter id = 1;
+  optional StringFilter title = 2;
+  optional StringFilter content = 3;
+  optional BoolFilter published = 4;
+  optional Int64Filter author_id = 5;
+}
+
+// Post order by
+message PostOrderBy {
+  option (synapse.graphql.message) = { input_type: true };
+
+  optional OrderDirection id = 1;
+  optional OrderDirection title = 2;
+  optional OrderDirection published = 3;
+  optional OrderDirection created_at = 4;
+  optional OrderDirection updated_at = 5;
+}
+
+// =============================================================================
 // Request/Response Messages
 // =============================================================================
 
@@ -180,10 +264,14 @@ message GetUserResponse {
 }
 
 message ListUsersRequest {
+  // Relay pagination
   optional string after = 1;
   optional string before = 2;
   optional int32 first = 3;
   optional int32 last = 4;
+  // Filter & ordering
+  optional UserFilter filter = 5;
+  optional UserOrderBy order_by = 6;
 }
 
 message CreateUserRequest {
@@ -221,10 +309,14 @@ message GetPostResponse {
 }
 
 message ListPostsRequest {
+  // Relay pagination
   optional string after = 1;
   optional string before = 2;
   optional int32 first = 3;
   optional int32 last = 4;
+  // Filter & ordering
+  optional PostFilter filter = 5;
+  optional PostOrderBy order_by = 6;
 }
 
 message CreatePostRequest {

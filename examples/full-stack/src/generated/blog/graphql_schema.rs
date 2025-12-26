@@ -5,7 +5,7 @@
 #![allow(missing_docs)]
 #![allow(unused_imports)]
 
-use async_graphql::{Object, Context, Result, ID, InputObject, SimpleObject, EmptySubscription, Schema};
+use async_graphql::{Object, Context, Result, ID, InputObject, SimpleObject, EmptySubscription, Schema, Enum};
 use super::user_service_storage::{UserServiceStorage, StorageError as UserStorageError};
 use super::post_service_storage::{PostServiceStorage, StorageError as PostStorageError};
 use super::sea_orm_user_service_storage::SeaOrmUserServiceStorage;
@@ -27,6 +27,15 @@ use super::{
     UpdatePostRequest, UpdatePostInput as ProtoUpdatePostInput, UpdatePostResponse,
     DeletePostRequest, DeletePostResponse,
     PageInfo as ProtoPageInfo,
+    // Filter types
+    StringFilter as ProtoStringFilter,
+    BoolFilter as ProtoBoolFilter,
+    Int64Filter as ProtoInt64Filter,
+    UserFilter as ProtoUserFilter,
+    PostFilter as ProtoPostFilter,
+    UserOrderBy as ProtoUserOrderBy,
+    PostOrderBy as ProtoPostOrderBy,
+    OrderDirection as ProtoOrderDirection,
 };
 
 // ============================================================================
@@ -137,6 +146,174 @@ pub struct PostConnection {
 }
 
 // ============================================================================
+// Filter & OrderBy Types
+// ============================================================================
+
+/// Sort direction
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Default)]
+pub enum OrderDirection {
+    #[default]
+    ASC,
+    DESC,
+}
+
+impl From<OrderDirection> for ProtoOrderDirection {
+    fn from(dir: OrderDirection) -> Self {
+        match dir {
+            OrderDirection::ASC => ProtoOrderDirection::Asc,
+            OrderDirection::DESC => ProtoOrderDirection::Desc,
+        }
+    }
+}
+
+/// String comparison filter
+#[derive(InputObject, Default)]
+pub struct StringFilter {
+    pub eq: Option<String>,
+    pub ne: Option<String>,
+    pub contains: Option<String>,
+    pub starts_with: Option<String>,
+    pub ends_with: Option<String>,
+}
+
+impl From<StringFilter> for ProtoStringFilter {
+    fn from(f: StringFilter) -> Self {
+        Self {
+            eq: f.eq,
+            ne: f.ne,
+            contains: f.contains,
+            starts_with: f.starts_with,
+            ends_with: f.ends_with,
+        }
+    }
+}
+
+/// Boolean comparison filter
+#[derive(InputObject, Default)]
+pub struct BoolFilter {
+    pub eq: Option<bool>,
+}
+
+impl From<BoolFilter> for ProtoBoolFilter {
+    fn from(f: BoolFilter) -> Self {
+        Self { eq: f.eq }
+    }
+}
+
+/// Int64 comparison filter
+#[derive(InputObject, Default)]
+pub struct Int64Filter {
+    pub eq: Option<i64>,
+    pub ne: Option<i64>,
+    pub gt: Option<i64>,
+    pub gte: Option<i64>,
+    pub lt: Option<i64>,
+    pub lte: Option<i64>,
+    #[graphql(name = "in")]
+    pub in_: Option<Vec<i64>>,
+}
+
+impl From<Int64Filter> for ProtoInt64Filter {
+    fn from(f: Int64Filter) -> Self {
+        Self {
+            eq: f.eq,
+            ne: f.ne,
+            gt: f.gt,
+            gte: f.gte,
+            lt: f.lt,
+            lte: f.lte,
+            r#in: f.in_.unwrap_or_default(),
+        }
+    }
+}
+
+/// User filter
+#[derive(InputObject, Default)]
+pub struct UserFilter {
+    pub id: Option<Int64Filter>,
+    pub email: Option<StringFilter>,
+    pub name: Option<StringFilter>,
+    pub bio: Option<StringFilter>,
+}
+
+impl From<UserFilter> for ProtoUserFilter {
+    fn from(f: UserFilter) -> Self {
+        Self {
+            id: f.id.map(Into::into),
+            email: f.email.map(Into::into),
+            name: f.name.map(Into::into),
+            bio: f.bio.map(Into::into),
+        }
+    }
+}
+
+/// User order by
+#[derive(InputObject, Default)]
+pub struct UserOrderBy {
+    pub id: Option<OrderDirection>,
+    pub email: Option<OrderDirection>,
+    pub name: Option<OrderDirection>,
+    pub created_at: Option<OrderDirection>,
+    pub updated_at: Option<OrderDirection>,
+}
+
+impl From<UserOrderBy> for ProtoUserOrderBy {
+    fn from(o: UserOrderBy) -> Self {
+        Self {
+            id: o.id.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            email: o.email.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            name: o.name.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            created_at: o.created_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            updated_at: o.updated_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+        }
+    }
+}
+
+/// Post filter
+#[derive(InputObject, Default)]
+pub struct PostFilter {
+    pub id: Option<Int64Filter>,
+    pub title: Option<StringFilter>,
+    pub content: Option<StringFilter>,
+    pub published: Option<BoolFilter>,
+    pub author_id: Option<Int64Filter>,
+}
+
+impl From<PostFilter> for ProtoPostFilter {
+    fn from(f: PostFilter) -> Self {
+        Self {
+            id: f.id.map(Into::into),
+            title: f.title.map(Into::into),
+            content: f.content.map(Into::into),
+            published: f.published.map(Into::into),
+            author_id: f.author_id.map(Into::into),
+        }
+    }
+}
+
+/// Post order by
+#[derive(InputObject, Default)]
+pub struct PostOrderBy {
+    pub id: Option<OrderDirection>,
+    pub title: Option<OrderDirection>,
+    pub published: Option<OrderDirection>,
+    pub created_at: Option<OrderDirection>,
+    pub updated_at: Option<OrderDirection>,
+}
+
+impl From<PostOrderBy> for ProtoPostOrderBy {
+    fn from(o: PostOrderBy) -> Self {
+        Self {
+            id: o.id.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            title: o.title.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            published: o.published.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            created_at: o.created_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+            updated_at: o.updated_at.map(|d| d.into()).map(|d: ProtoOrderDirection| d as i32),
+        }
+    }
+}
+
+// ============================================================================
 // Input Types
 // ============================================================================
 
@@ -188,7 +365,7 @@ impl Query {
         }
     }
 
-    /// List users with Relay-style pagination
+    /// List users with Relay-style pagination, filtering, and ordering
     async fn users(
         &self,
         ctx: &Context<'_>,
@@ -196,9 +373,18 @@ impl Query {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<UserFilter>,
+        order_by: Option<UserOrderBy>,
     ) -> Result<UserConnection> {
         let storage = ctx.data_unchecked::<Arc<SeaOrmUserServiceStorage>>();
-        let request = ListUsersRequest { after, before, first, last };
+        let request = ListUsersRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: filter.map(Into::into),
+            order_by: order_by.map(Into::into),
+        };
         let response = storage.list_users(request).await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
@@ -242,7 +428,7 @@ impl Query {
         }
     }
 
-    /// List posts with Relay-style pagination
+    /// List posts with Relay-style pagination, filtering, and ordering
     async fn posts(
         &self,
         ctx: &Context<'_>,
@@ -250,9 +436,18 @@ impl Query {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<PostFilter>,
+        order_by: Option<PostOrderBy>,
     ) -> Result<PostConnection> {
         let storage = ctx.data_unchecked::<Arc<SeaOrmPostServiceStorage>>();
-        let request = ListPostsRequest { after, before, first, last };
+        let request = ListPostsRequest {
+            after,
+            before,
+            first,
+            last,
+            filter: filter.map(Into::into),
+            order_by: order_by.map(Into::into),
+        };
         let response = storage.list_posts(request).await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
