@@ -34,6 +34,8 @@ impl UserServiceQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<super::UserFilter>,
+        order_by: Option<super::UserOrderBy>,
     ) -> Result<super::UserConnection> {
         let storage = ctx.data_unchecked::<Arc<Storage>>();
         let request = super::super::ListUsersRequest {
@@ -41,8 +43,8 @@ impl UserServiceQuery {
             before,
             first,
             last,
-            filter: None,
-            order_by: None,
+            filter: filter.map(|f| f.into()),
+            order_by: order_by.map(|o| o.into()),
         };
         let response = storage
             .list_users(request)

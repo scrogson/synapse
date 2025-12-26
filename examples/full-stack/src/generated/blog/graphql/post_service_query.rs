@@ -34,6 +34,8 @@ impl PostServiceQuery {
         before: Option<String>,
         first: Option<i32>,
         last: Option<i32>,
+        filter: Option<super::PostFilter>,
+        order_by: Option<super::PostOrderBy>,
     ) -> Result<super::PostConnection> {
         let storage = ctx.data_unchecked::<Arc<Storage>>();
         let request = super::super::ListPostsRequest {
@@ -41,8 +43,8 @@ impl PostServiceQuery {
             before,
             first,
             last,
-            filter: None,
-            order_by: None,
+            filter: filter.map(|f| f.into()),
+            order_by: order_by.map(|o| o.into()),
         };
         let response = storage
             .list_posts(request)

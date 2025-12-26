@@ -284,7 +284,11 @@ fn generate_query_resolver_methods(
             .unwrap_or_else(|| format_ident!("()"));
 
         let resolver = if is_list {
-            // List operation - return connection
+            // List operation - return connection with filter/orderBy support
+            // Derive filter and orderBy types from entity name
+            let filter_type = format_ident!("{}Filter", entity_name.to_upper_camel_case());
+            let order_by_type = format_ident!("{}OrderBy", entity_name.to_upper_camel_case());
+
             quote! {
                 #description_attr
                 async fn #field_ident(
@@ -294,6 +298,8 @@ fn generate_query_resolver_methods(
                     before: Option<String>,
                     first: Option<i32>,
                     last: Option<i32>,
+                    filter: Option<super::#filter_type>,
+                    order_by: Option<super::#order_by_type>,
                 ) -> Result<super::#output_type> {
                     let storage = ctx.data_unchecked::<Arc<Storage>>();
                     let request = super::super::#request_type {
@@ -301,8 +307,8 @@ fn generate_query_resolver_methods(
                         before,
                         first,
                         last,
-                        filter: None,
-                        order_by: None,
+                        filter: filter.map(|f| f.into()),
+                        order_by: order_by.map(|o| o.into()),
                     };
                     let response = storage.#storage_method(request).await
                         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
