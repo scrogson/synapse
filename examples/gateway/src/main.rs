@@ -36,7 +36,6 @@ use synapse_full_stack_example::blog::{
     user_service_client::UserServiceClient as BlogUserClient,
     post_service_client::PostServiceClient,
     graphql::{
-        UserServiceMutation as BlogUserServiceMutation,
         PostServiceQuery as BlogPostServiceQuery,
         PostServiceMutation as BlogPostServiceMutation,
         User as BlogUser,
@@ -46,6 +45,8 @@ use synapse_full_stack_example::blog::{
         UserLoader as BlogUserLoader,
         PostLoader,
         PostsByUserLoader,
+        CreateUserInput as BlogCreateUserInput,
+        UpdateUserInput as BlogUpdateUserInput,
     },
 };
 
@@ -120,6 +121,70 @@ impl BlogQuery {
     }
 }
 
+/// Blog domain mutations (blog authors - prefixed to avoid conflicts with IAM users)
+#[derive(Default)]
+pub struct BlogMutation;
+
+#[async_graphql::Object]
+impl BlogMutation {
+    /// Create a new blog author
+    async fn create_blog_author(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+        input: BlogCreateUserInput,
+    ) -> async_graphql::Result<BlogUser> {
+        let client = ctx.data_unchecked::<BlogUserClient<Channel>>();
+        let request: synapse_full_stack_example::blog::CreateUserRequest = input.into();
+        let response = client
+            .clone()
+            .create_user(request)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.message()))?;
+        Ok(response
+            .into_inner()
+            .user
+            .map(BlogUser::from)
+            .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
+    }
+
+    /// Update an existing blog author
+    async fn update_blog_author(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+        id: i64,
+        input: BlogUpdateUserInput,
+    ) -> async_graphql::Result<BlogUser> {
+        let client = ctx.data_unchecked::<BlogUserClient<Channel>>();
+        let request = input.to_request(id);
+        let response = client
+            .clone()
+            .update_user(request)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.message()))?;
+        Ok(response
+            .into_inner()
+            .user
+            .map(BlogUser::from)
+            .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
+    }
+
+    /// Delete a blog author
+    async fn delete_blog_author(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+        id: i64,
+    ) -> async_graphql::Result<bool> {
+        let client = ctx.data_unchecked::<BlogUserClient<Channel>>();
+        let request = synapse_full_stack_example::blog::DeleteUserRequest { id };
+        let response = client
+            .clone()
+            .delete_user(request)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.message()))?;
+        Ok(response.into_inner().success)
+    }
+}
+
 /// Combined Query merging all service queries
 ///
 /// Note: We use namespaced queries to avoid field conflicts.
@@ -137,13 +202,16 @@ pub struct Query(
 );
 
 /// Combined Mutation merging all service mutations
+///
+/// Note: We use namespaced mutations to avoid field conflicts.
+/// - Blog: createBlogAuthor, updateBlogAuthor, deleteBlogAuthor, createPost, updatePost, deletePost
+/// - IAM: createUser, updateUser, deleteUser, createOrganization, etc.
 #[derive(MergedObject, Default)]
 pub struct Mutation(
-    // Blog mutations - these keep original names (createUser refers to blog authors)
-    // In a real app, you'd want to prefix these too
-    BlogUserServiceMutation,
+    // Blog mutations - using custom wrapper with prefixed names for user mutations
+    BlogMutation,
     BlogPostServiceMutation,
-    // IAM mutations
+    // IAM mutations - these get the unprefixed names (createUser, etc.)
     IamUserServiceMutation,
     IamOrganizationServiceMutation,
     IamTeamServiceMutation,

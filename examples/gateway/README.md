@@ -80,13 +80,35 @@ team(id: Int!): Team
 teams(...): TeamConnection
 ```
 
+### Mutations
+```graphql
+# Blog service (prefixed to avoid conflicts)
+createBlogAuthor(input: CreateUserInput!): User!
+updateBlogAuthor(id: Int!, input: UpdateUserInput!): User!
+deleteBlogAuthor(id: Int!): Boolean!
+createPost(input: CreatePostInput!): Post!
+updatePost(id: Int!, input: UpdatePostInput!): Post!
+deletePost(id: Int!): Boolean!
+
+# IAM service
+createUser(input: CreateUserInput!): User!
+updateUser(id: Int!, input: UpdateUserInput!): User!
+deleteUser(id: Int!): Boolean!
+createOrganization(input: CreateOrganizationInput!): Organization!
+updateOrganization(id: Int!, input: UpdateOrganizationInput!): Organization!
+deleteOrganization(id: Int!): Boolean!
+createTeam(input: CreateTeamInput!): Team!
+updateTeam(id: Int!, input: UpdateTeamInput!): Team!
+deleteTeam(id: Int!): Boolean!
+```
+
 ### Handling Name Conflicts
 
 When services have overlapping entity names (like `User` in both Blog and IAM), the gateway must resolve conflicts:
 
 1. **Query names**: Use prefixes like `blogAuthor` vs `user`
-2. **Type names**: Keep them as-is (they're in different packages)
-3. **Mutations**: May need prefixing (TODO)
+2. **Mutation names**: Use prefixes like `createBlogAuthor` vs `createUser`
+3. **Type names**: Keep them as-is (they're in different Rust packages, but will appear as separate types in GraphQL)
 
 ## Configuration
 
