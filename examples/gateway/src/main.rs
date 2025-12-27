@@ -73,14 +73,14 @@ use synapse_iam_example::iam::{
 // We need to wrap the service queries/mutations to avoid field name conflicts
 // Blog and IAM both have "user" and "users" fields
 
-/// Blog domain queries (blog posts and authors)
+/// Blog domain queries (authors and posts)
 #[derive(Default)]
 pub struct BlogQuery;
 
 #[async_graphql::Object]
 impl BlogQuery {
-    /// Get blog author by ID
-    async fn blog_author(&self, ctx: &async_graphql::Context<'_>, id: i64) -> async_graphql::Result<Option<BlogUser>> {
+    /// Get author by ID
+    async fn author(&self, ctx: &async_graphql::Context<'_>, id: i64) -> async_graphql::Result<Option<BlogUser>> {
         let client = ctx.data_unchecked::<BlogUserClient<Channel>>();
         let request = synapse_full_stack_example::blog::GetUserRequest { id };
         match client.clone().get_user(request).await {
@@ -95,8 +95,8 @@ impl BlogQuery {
         }
     }
 
-    /// List blog authors with pagination
-    async fn blog_authors(
+    /// List authors with pagination
+    async fn authors(
         &self,
         ctx: &async_graphql::Context<'_>,
         after: Option<String>,
@@ -121,14 +121,14 @@ impl BlogQuery {
     }
 }
 
-/// Blog domain mutations (blog authors - prefixed to avoid conflicts with IAM users)
+/// Blog domain mutations (authors)
 #[derive(Default)]
 pub struct BlogMutation;
 
 #[async_graphql::Object]
 impl BlogMutation {
-    /// Create a new blog author
-    async fn create_blog_author(
+    /// Create a new author
+    async fn create_author(
         &self,
         ctx: &async_graphql::Context<'_>,
         input: BlogCreateUserInput,
@@ -147,8 +147,8 @@ impl BlogMutation {
             .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
     }
 
-    /// Update an existing blog author
-    async fn update_blog_author(
+    /// Update an existing author
+    async fn update_author(
         &self,
         ctx: &async_graphql::Context<'_>,
         id: i64,
@@ -168,8 +168,8 @@ impl BlogMutation {
             .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
     }
 
-    /// Delete a blog author
-    async fn delete_blog_author(
+    /// Delete an author
+    async fn delete_author(
         &self,
         ctx: &async_graphql::Context<'_>,
         id: i64,
@@ -187,8 +187,8 @@ impl BlogMutation {
 
 /// Combined Query merging all service queries
 ///
-/// Note: We use namespaced queries to avoid field conflicts.
-/// - Blog: blogAuthor, blogAuthors, post, posts
+/// Note: We rename blog users to "authors" to avoid conflicts with IAM users.
+/// - Blog: author, authors, post, posts
 /// - IAM: user, users, organization, organizations, team, teams
 #[derive(MergedObject, Default)]
 pub struct Query(
@@ -203,8 +203,8 @@ pub struct Query(
 
 /// Combined Mutation merging all service mutations
 ///
-/// Note: We use namespaced mutations to avoid field conflicts.
-/// - Blog: createBlogAuthor, updateBlogAuthor, deleteBlogAuthor, createPost, updatePost, deletePost
+/// Note: We rename blog user mutations to "author" to avoid conflicts with IAM users.
+/// - Blog: createAuthor, updateAuthor, deleteAuthor, createPost, updatePost, deletePost
 /// - IAM: createUser, updateUser, deleteUser, createOrganization, etc.
 #[derive(MergedObject, Default)]
 pub struct Mutation(

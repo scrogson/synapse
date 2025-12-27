@@ -63,11 +63,9 @@ The gateway merges queries and mutations from both services:
 
 ### Queries
 ```graphql
-# Blog service (prefixed to avoid conflicts)
-blogAuthor(id: Int!): User
-blogAuthors(...): UserConnection
-
-# Blog posts
+# Blog service (users renamed to authors)
+author(id: Int!): User
+authors(...): UserConnection
 post(id: Int!): Post
 posts(...): PostConnection
 
@@ -82,10 +80,10 @@ teams(...): TeamConnection
 
 ### Mutations
 ```graphql
-# Blog service (prefixed to avoid conflicts)
-createBlogAuthor(input: CreateUserInput!): User!
-updateBlogAuthor(id: Int!, input: UpdateUserInput!): User!
-deleteBlogAuthor(id: Int!): Boolean!
+# Blog service (users renamed to authors)
+createAuthor(input: CreateUserInput!): User!
+updateAuthor(id: Int!, input: UpdateUserInput!): User!
+deleteAuthor(id: Int!): Boolean!
 createPost(input: CreatePostInput!): Post!
 updatePost(id: Int!, input: UpdatePostInput!): Post!
 deletePost(id: Int!): Boolean!
@@ -104,11 +102,11 @@ deleteTeam(id: Int!): Boolean!
 
 ### Handling Name Conflicts
 
-When services have overlapping entity names (like `User` in both Blog and IAM), the gateway must resolve conflicts:
+When services have overlapping entity names (like `User` in both Blog and IAM), the gateway resolves conflicts by using domain-appropriate names:
 
-1. **Query names**: Use prefixes like `blogAuthor` vs `user`
-2. **Mutation names**: Use prefixes like `createBlogAuthor` vs `createUser`
-3. **Type names**: Keep them as-is (they're in different Rust packages, but will appear as separate types in GraphQL)
+1. **Blog users → authors**: The blog domain calls them "authors" (`author`, `createAuthor`, etc.)
+2. **IAM users → users**: The IAM domain keeps the generic "user" name
+3. **Type names**: Each service has its own `User` type in different Rust packages
 
 ## Configuration
 
