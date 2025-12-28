@@ -11,7 +11,7 @@ import "synapse/storage/options.proto";
 // =============================================================================
 
 message Organization {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "organizations"
     relations: [
@@ -39,7 +39,7 @@ message Organization {
 }
 
 message Team {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "teams"
     relations: [
@@ -69,7 +69,7 @@ message Team {
 }
 
 message User {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "users"
     relations: [
@@ -104,7 +104,7 @@ message TeamMember {
   option (synapse.storage.entity) = {
     table_name: "team_members"
   };
-  option (synapse.graphql.message) = { skip: true };
+  option (synapse.graphql.type) = { skip: true };
 
   int64 team_id = 1 [(synapse.storage.column).primary_key = true];
   int64 user_id = 2 [(synapse.storage.column).primary_key = true];

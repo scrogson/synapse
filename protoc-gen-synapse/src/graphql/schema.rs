@@ -5,8 +5,8 @@
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_message_options, get_cached_graphql_method_options,
-    get_cached_graphql_service_options,
+    get_cached_entity_options, get_cached_graphql_mutation_options,
+    get_cached_graphql_service_options, get_cached_graphql_type_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
@@ -62,7 +62,7 @@ pub fn collect_schema_info(
             let snake_name = msg_name.to_snake_case();
 
             // Check for graphql options
-            let graphql_opts = get_cached_graphql_message_options(proto_file_name, msg_name);
+            let graphql_opts = get_cached_graphql_type_options(proto_file_name, msg_name);
             let entity_opts = get_cached_entity_options(proto_file_name, msg_name);
 
             // Skip if graphql.skip is true
@@ -71,7 +71,7 @@ pub fn collect_schema_info(
             }
 
             // Categorize by type
-            if graphql_opts.as_ref().is_some_and(|o| o.input_type) {
+            if graphql_opts.as_ref().is_some_and(|o| o.input) {
                 // Include input types (including proto-defined Filter/OrderBy types)
                 info.input_types.push((msg_name.to_string(), snake_name));
             } else if let Some(ref entity) = entity_opts {
@@ -116,16 +116,14 @@ pub fn collect_schema_info(
         // Collect auto-generated input types from mutation methods
         for method in &service.method {
             let method_name = method.name.as_deref().unwrap_or("");
-            let method_opts = get_cached_graphql_method_options(main_file_name, svc_name, method_name);
+            let mutation_opts = get_cached_graphql_mutation_options(main_file_name, svc_name, method_name);
 
-            // Skip if not a mutation
-            let operation = method_opts
-                .as_ref()
-                .filter(|o| !o.operation.is_empty())
-                .map(|o| o.operation.as_str())
-                .unwrap_or("Query");
+            // Only process mutations (methods with synapse.graphql.mutation option)
+            let Some(opts) = mutation_opts else {
+                continue;
+            };
 
-            if operation != "Mutation" {
+            if opts.skip {
                 continue;
             }
 

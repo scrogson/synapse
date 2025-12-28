@@ -183,49 +183,44 @@ service AuthorService {
     generate_implementation: true
   };
 
+  // Get an author by ID
   rpc GetAuthor(GetAuthorRequest) returns (GetAuthorResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "author"
-      description: "Get an author by ID"
-      operation: "Query"
       output_type: "Author"
       output_field: "author"
     };
   }
 
+  // List authors with pagination
   rpc ListAuthors(ListAuthorsRequest) returns (AuthorConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "authors"
-      description: "List authors with pagination"
-      operation: "Query"
     };
   }
 
+  // Create a new author
   rpc CreateAuthor(CreateAuthorRequest) returns (CreateAuthorResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createAuthor"
-      description: "Create a new author"
-      operation: "Mutation"
       output_type: "Author"
       output_field: "author"
     };
   }
 
+  // Update an existing author
   rpc UpdateAuthor(UpdateAuthorRequest) returns (UpdateAuthorResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "updateAuthor"
-      description: "Update an existing author"
-      operation: "Mutation"
       output_type: "Author"
       output_field: "author"
     };
   }
 
+  // Delete an author
   rpc DeleteAuthor(DeleteAuthorRequest) returns (DeleteAuthorResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "deleteAuthor"
-      description: "Delete an author"
-      operation: "Mutation"
     };
   }
 }
@@ -238,49 +233,44 @@ service PostService {
     generate_implementation: true
   };
 
+  // Get a post by ID
   rpc GetPost(GetPostRequest) returns (GetPostResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "post"
-      description: "Get a post by ID"
-      operation: "Query"
       output_type: "Post"
       output_field: "post"
     };
   }
 
+  // List posts with pagination
   rpc ListPosts(ListPostsRequest) returns (PostConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "posts"
-      description: "List posts with pagination"
-      operation: "Query"
     };
   }
 
+  // Create a new post
   rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createPost"
-      description: "Create a new post"
-      operation: "Mutation"
       output_type: "Post"
       output_field: "post"
     };
   }
 
+  // Update an existing post
   rpc UpdatePost(UpdatePostRequest) returns (UpdatePostResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "updatePost"
-      description: "Update an existing post"
-      operation: "Mutation"
       output_type: "Post"
       output_field: "post"
     };
   }
 
+  // Delete a post
   rpc DeletePost(DeletePostRequest) returns (DeletePostResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "deletePost"
-      description: "Delete a post"
-      operation: "Mutation"
     };
   }
 }

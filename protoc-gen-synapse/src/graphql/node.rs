@@ -4,7 +4,7 @@
 //! Provides global ID encoding/decoding using base62 for URL-safe IDs.
 
 use crate::error::GeneratorError;
-use crate::storage::seaorm::options::get_cached_graphql_message_options;
+use crate::storage::seaorm::options::get_cached_graphql_type_options;
 use heck::ToUpperCamelCase;
 use proc_macro2::TokenStream;
 use prost_types::compiler::code_generator_response::File;
@@ -20,13 +20,13 @@ pub fn collect_node_types(
 
     for message in &file.message_type {
         let msg_name = message.name.as_deref().unwrap_or("");
-        let msg_opts = get_cached_graphql_message_options(file_name, msg_name);
+        let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
 
         if msg_opts.as_ref().is_some_and(|o| o.node && !o.skip) {
             let type_name = msg_opts
                 .as_ref()
-                .filter(|o| !o.type_name.is_empty())
-                .map(|o| o.type_name.clone())
+                .filter(|o| !o.name.is_empty())
+                .map(|o| o.name.clone())
                 .unwrap_or_else(|| msg_name.to_upper_camel_case());
             node_types.push((message, type_name));
         }

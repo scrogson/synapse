@@ -10,21 +10,29 @@ package synapse.graphql;
 
 import "google/protobuf/descriptor.proto";
 
-// Message-level GraphQL generation options
-message MessageOptions {
+// =============================================================================
+// Message/Type Options
+// =============================================================================
+
+// Type-level GraphQL generation options (applied to messages)
+message TypeOptions {
   // Skip this message from GraphQL schema generation
   bool skip = 1;
 
   // Override the GraphQL type name (default: message name)
-  string type_name = 2;
+  string name = 2;
 
   // Generate as GraphQL input type instead of output type
-  bool input_type = 3;
+  bool input = 3;
 
   // Implement Relay Node interface (requires id field)
   // When true, the type will have a global ID field and be fetchable via node(id:)
   bool node = 4;
 }
+
+// =============================================================================
+// Field Options
+// =============================================================================
 
 // Deprecation info for GraphQL schema elements
 message Deprecated {
@@ -44,42 +52,78 @@ message FieldOptions {
   Deprecated deprecated = 3;
 }
 
+// =============================================================================
+// Service Options
+// =============================================================================
+
 // Service-level GraphQL generation options
 message ServiceOptions {
   // Skip generation for this service (generates by default)
   bool skip = 1;
 }
 
-// Method-level GraphQL generation options
-message MethodOptions {
+// =============================================================================
+// Operation Options (Query, Mutation, Subscription)
+// =============================================================================
+
+// Query operation options - generates a field on the Query type
+// Description is taken from the proto comment on the rpc method
+message QueryOptions {
   // Skip this method from GraphQL schema
   bool skip = 1;
 
-  // Override the field name in Query/Mutation
+  // Override the field name in Query (default: derived from method name)
   string name = 2;
 
-  // Description for the GraphQL field
-  string description = 3;
+  // GraphQL output type (unwrap from response wrapper)
+  // e.g., "User" instead of "GetUserResponse"
+  string output_type = 3;
 
-  // Operation type for this method: Query, Mutation, or Subscription
-  // Defaults to "Query" if not specified
-  string operation = 4;
+  // Field path to extract from response (e.g., "user" to get response.user)
+  string output_field = 4;
+}
 
-  // GraphQL input type (unwrap from request wrapper)
+// Mutation operation options - generates a field on the Mutation type
+// Description is taken from the proto comment on the rpc method
+message MutationOptions {
+  // Skip this method from GraphQL schema
+  bool skip = 1;
+
+  // Override the field name in Mutation (default: derived from method name)
+  string name = 2;
+
+  // GraphQL input type name (for auto-generated input from request)
   // e.g., "CreateUserInput" instead of "CreateUserRequest"
-  string input_type = 5;
+  string input_type = 3;
 
   // GraphQL output type (unwrap from response wrapper)
   // e.g., "User" instead of "CreateUserResponse"
-  string output_type = 6;
+  string output_type = 4;
 
   // Field path to extract from response (e.g., "user" to get response.user)
-  string output_field = 7;
+  string output_field = 5;
 }
 
+// Subscription operation options - generates a field on the Subscription type
+// Description is taken from the proto comment on the rpc method
+message SubscriptionOptions {
+  // Skip this method from GraphQL schema
+  bool skip = 1;
+
+  // Override the field name in Subscription (default: derived from method name)
+  string name = 2;
+
+  // GraphQL output type for subscription events
+  string output_type = 3;
+}
+
+// =============================================================================
+// Extensions
+// =============================================================================
+
 extend google.protobuf.MessageOptions {
-  // GraphQL message generation options
-  MessageOptions message = 53001;
+  // GraphQL type generation options
+  TypeOptions type = 53001;
 }
 
 extend google.protobuf.FieldOptions {
@@ -93,6 +137,12 @@ extend google.protobuf.ServiceOptions {
 }
 
 extend google.protobuf.MethodOptions {
-  // GraphQL method generation options
-  MethodOptions method = 53004;
+  // Generate as GraphQL Query field
+  QueryOptions query = 53004;
+
+  // Generate as GraphQL Mutation field
+  MutationOptions mutation = 53005;
+
+  // Generate as GraphQL Subscription field
+  SubscriptionOptions subscription = 53006;
 }

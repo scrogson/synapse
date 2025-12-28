@@ -12,7 +12,7 @@ import "synapse/graphql/options.proto";
 
 // Author entity - a blog author profile linked to an IAM User
 message Author {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "authors"
     relations: [
@@ -50,7 +50,7 @@ message Author {
 
 // Post entity
 message Post {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "posts"
     relations: [

@@ -26,7 +26,7 @@ message GetUserResponse {
 }
 
 message GetUserByEmailRequest {
-  option (synapse.graphql.message) = { input_type: true };
+  option (synapse.graphql.type) = { input: true };
   string email = 1;
 }
 
@@ -81,7 +81,7 @@ message GetOrganizationResponse {
 }
 
 message GetOrganizationBySlugRequest {
-  option (synapse.graphql.message) = { input_type: true };
+  option (synapse.graphql.type) = { input: true };
   string slug = 1;
 }
 
@@ -173,7 +173,7 @@ message DeleteTeamResponse {
 
 // Team membership
 message AddTeamMemberRequest {
-  option (synapse.graphql.message) = { input_type: true };
+  option (synapse.graphql.type) = { input: true };
   int64 team_id = 1;
   int64 user_id = 2;
   string role = 3;
@@ -184,7 +184,7 @@ message AddTeamMemberResponse {
 }
 
 message RemoveTeamMemberRequest {
-  option (synapse.graphql.message) = { input_type: true };
+  option (synapse.graphql.type) = { input: true };
   int64 team_id = 1;
   int64 user_id = 2;
 }
@@ -205,12 +205,10 @@ service UserService {
     generate_implementation: true
   };
 
-  // Queries
+  // Get a user by ID
   rpc GetUser(GetUserRequest) returns (GetUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "user"
-      description: "Get a user by ID"
-      operation: "Query"
       output_type: "User"
       output_field: "user"
     };
@@ -219,40 +217,35 @@ service UserService {
   // GetUserByEmail removed - requires custom implementation
   // TODO: Add support for non-standard lookup patterns
 
+  // List users with pagination
   rpc ListUsers(ListUsersRequest) returns (UserConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "users"
-      description: "List users with pagination"
-      operation: "Query"
     };
   }
 
-  // Mutations
+  // Create a new user
   rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createUser"
-      description: "Create a new user"
-      operation: "Mutation"
       output_type: "User"
       output_field: "user"
     };
   }
 
+  // Update an existing user
   rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "updateUser"
-      description: "Update an existing user"
-      operation: "Mutation"
       output_type: "User"
       output_field: "user"
     };
   }
 
+  // Delete a user
   rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "deleteUser"
-      description: "Delete a user"
-      operation: "Mutation"
     };
   }
 }
@@ -265,12 +258,10 @@ service OrganizationService {
     generate_implementation: true
   };
 
-  // Queries
+  // Get an organization by ID
   rpc GetOrganization(GetOrganizationRequest) returns (GetOrganizationResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "organization"
-      description: "Get an organization by ID"
-      operation: "Query"
       output_type: "Organization"
       output_field: "organization"
     };
@@ -279,40 +270,35 @@ service OrganizationService {
   // GetOrganizationBySlug removed - requires custom implementation
   // TODO: Add support for non-standard lookup patterns
 
+  // List organizations with pagination
   rpc ListOrganizations(ListOrganizationsRequest) returns (OrganizationConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "organizations"
-      description: "List organizations with pagination"
-      operation: "Query"
     };
   }
 
-  // Mutations
+  // Create a new organization
   rpc CreateOrganization(CreateOrganizationRequest) returns (CreateOrganizationResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createOrganization"
-      description: "Create a new organization"
-      operation: "Mutation"
       output_type: "Organization"
       output_field: "organization"
     };
   }
 
+  // Update an existing organization
   rpc UpdateOrganization(UpdateOrganizationRequest) returns (UpdateOrganizationResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "updateOrganization"
-      description: "Update an existing organization"
-      operation: "Mutation"
       output_type: "Organization"
       output_field: "organization"
     };
   }
 
+  // Delete an organization
   rpc DeleteOrganization(DeleteOrganizationRequest) returns (DeleteOrganizationResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "deleteOrganization"
-      description: "Delete an organization"
-      operation: "Mutation"
     };
   }
 }
@@ -325,51 +311,44 @@ service TeamService {
     generate_implementation: true
   };
 
-  // Queries
+  // Get a team by ID
   rpc GetTeam(GetTeamRequest) returns (GetTeamResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "team"
-      description: "Get a team by ID"
-      operation: "Query"
       output_type: "Team"
       output_field: "team"
     };
   }
 
+  // List teams with pagination
   rpc ListTeams(ListTeamsRequest) returns (TeamConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "teams"
-      description: "List teams with pagination"
-      operation: "Query"
     };
   }
 
-  // Mutations
+  // Create a new team
   rpc CreateTeam(CreateTeamRequest) returns (CreateTeamResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createTeam"
-      description: "Create a new team"
-      operation: "Mutation"
       output_type: "Team"
       output_field: "team"
     };
   }
 
+  // Update an existing team
   rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "updateTeam"
-      description: "Update an existing team"
-      operation: "Mutation"
       output_type: "Team"
       output_field: "team"
     };
   }
 
+  // Delete a team
   rpc DeleteTeam(DeleteTeamRequest) returns (DeleteTeamResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "deleteTeam"
-      description: "Delete a team"
-      operation: "Mutation"
     };
   }
 

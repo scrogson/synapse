@@ -9,7 +9,7 @@
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_message_options,
+    get_cached_entity_options, get_cached_graphql_type_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use prost_types::compiler::code_generator_response::File;
@@ -25,8 +25,8 @@ pub fn generate(
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
-    // Check for graphql message options
-    let msg_opts = get_cached_graphql_message_options(file_name, msg_name);
+    // Check for graphql type options
+    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
 
     // Skip if no graphql options or explicitly skipped
     if msg_opts.as_ref().is_some_and(|o| o.skip) {
@@ -49,8 +49,8 @@ pub fn generate(
     // Determine type name
     let type_name = msg_opts
         .as_ref()
-        .filter(|o| !o.type_name.is_empty())
-        .map(|o| o.type_name.clone())
+        .filter(|o| !o.name.is_empty())
+        .map(|o| o.name.clone())
         .unwrap_or_else(|| msg_name.to_upper_camel_case());
 
     let mut loaders = Vec::new();
@@ -263,8 +263,8 @@ pub fn generate_entity_loader(
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
-    // Check for graphql message options
-    let msg_opts = get_cached_graphql_message_options(file_name, msg_name);
+    // Check for graphql type options
+    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
 
     // Skip if no graphql options or explicitly skipped
     if msg_opts.as_ref().is_some_and(|o| o.skip) {
@@ -280,8 +280,8 @@ pub fn generate_entity_loader(
     // Determine type name
     let type_name = msg_opts
         .as_ref()
-        .filter(|o| !o.type_name.is_empty())
-        .map(|o| o.type_name.clone())
+        .filter(|o| !o.name.is_empty())
+        .map(|o| o.name.clone())
         .unwrap_or_else(|| msg_name.to_upper_camel_case());
 
     let loader_name = format!("{}Loader", type_name);

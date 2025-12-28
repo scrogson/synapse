@@ -5,7 +5,8 @@
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
-    get_cached_graphql_method_options, get_cached_graphql_service_options,
+    get_cached_graphql_mutation_options, get_cached_graphql_query_options,
+    get_cached_graphql_service_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
@@ -35,24 +36,21 @@ pub fn generate(
 
     for method in &service.method {
         let method_name = method.name.as_deref().unwrap_or("");
-        let method_opts = get_cached_graphql_method_options(file_name, svc_name, method_name);
+        let query_opts = get_cached_graphql_query_options(file_name, svc_name, method_name);
+        let mutation_opts = get_cached_graphql_mutation_options(file_name, svc_name, method_name);
 
-        // Skip if marked
-        if method_opts.as_ref().is_some_and(|o| o.skip) {
-            continue;
+        // A method is a mutation if it has mutation options
+        if let Some(opts) = mutation_opts {
+            if !opts.skip {
+                mutations.push((method, opts));
+            }
+        } else if let Some(opts) = query_opts {
+            // A method is a query if it has query options
+            if !opts.skip {
+                queries.push((method, opts));
+            }
         }
-
-        // Determine operation type (default to Query)
-        let operation = method_opts
-            .as_ref()
-            .filter(|o| !o.operation.is_empty())
-            .map(|o| o.operation.as_str())
-            .unwrap_or("Query");
-
-        match operation {
-            "Mutation" => mutations.push((method, method_opts)),
-            _ => queries.push((method, method_opts)),
-        }
+        // If a method has neither option, it's not exposed in GraphQL
     }
 
     let mut files = Vec::new();
@@ -80,7 +78,7 @@ fn generate_query_struct(
     service: &ServiceDescriptorProto,
     methods: &[(
         &MethodDescriptorProto,
-        Option<crate::options::synapse::graphql::MethodOptions>,
+        crate::options::synapse::graphql::QueryOptions,
     )],
 ) -> Result<Option<File>, GeneratorError> {
     let svc_name = service.name.as_deref().unwrap_or("");
@@ -149,7 +147,7 @@ fn generate_mutation_struct(
     service: &ServiceDescriptorProto,
     methods: &[(
         &MethodDescriptorProto,
-        Option<crate::options::synapse::graphql::MethodOptions>,
+        crate::options::synapse::graphql::MutationOptions,
     )],
 ) -> Result<Option<File>, GeneratorError> {
     let svc_name = service.name.as_deref().unwrap_or("");
@@ -217,7 +215,7 @@ fn generate_query_resolver_methods(
     svc_name: &str,
     methods: &[(
         &MethodDescriptorProto,
-        Option<crate::options::synapse::graphql::MethodOptions>,
+        crate::options::synapse::graphql::QueryOptions,
     )],
 ) -> Result<TokenStream, GeneratorError> {
     let mut method_tokens = Vec::new();
@@ -228,22 +226,12 @@ fn generate_query_resolver_methods(
         let method_name = method.name.as_deref().unwrap_or("");
 
         // Determine Rust method name (snake_case - async-graphql converts to camelCase automatically)
-        let field_name = opts
-            .as_ref()
-            .filter(|o| !o.name.is_empty())
-            .map(|o| o.name.to_snake_case())
-            .unwrap_or_else(|| method_name.to_snake_case());
+        let field_name = if !opts.name.is_empty() {
+            opts.name.to_snake_case()
+        } else {
+            method_name.to_snake_case()
+        };
         let field_ident = format_ident!("{}", field_name);
-
-        // Generate description if present
-        let description_attr = opts
-            .as_ref()
-            .filter(|o| !o.description.is_empty())
-            .map(|o| {
-                let desc = &o.description;
-                quote! { #[doc = #desc] }
-            })
-            .unwrap_or_else(|| quote! {});
 
         // gRPC method name (snake_case)
         let grpc_method = format_ident!("{}", method_name.to_snake_case());
@@ -252,24 +240,20 @@ fn generate_query_resolver_methods(
         let is_list = method_name.to_lowercase().starts_with("list");
 
         // Get output type name from options or derive from method name
-        let output_type = opts
-            .as_ref()
-            .filter(|o| !o.output_type.is_empty())
-            .map(|o| format_ident!("{}", o.output_type))
-            .unwrap_or_else(|| {
-                if is_list {
-                    format_ident!("{}Connection", entity_name.to_upper_camel_case())
-                } else {
-                    format_ident!("{}", entity_name.to_upper_camel_case())
-                }
-            });
+        let output_type = if !opts.output_type.is_empty() {
+            format_ident!("{}", opts.output_type)
+        } else if is_list {
+            format_ident!("{}Connection", entity_name.to_upper_camel_case())
+        } else {
+            format_ident!("{}", entity_name.to_upper_camel_case())
+        };
 
         // Get output field from response
-        let output_field = opts
-            .as_ref()
-            .filter(|o| !o.output_field.is_empty())
-            .map(|o| format_ident!("{}", o.output_field))
-            .unwrap_or_else(|| format_ident!("{}", entity_snake));
+        let output_field = if !opts.output_field.is_empty() {
+            format_ident!("{}", opts.output_field)
+        } else {
+            format_ident!("{}", entity_snake)
+        };
 
         // Get request type
         let request_type = method
@@ -288,7 +272,6 @@ fn generate_query_resolver_methods(
             let order_by_type = format_ident!("{}OrderBy", entity_name.to_upper_camel_case());
 
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,
@@ -316,7 +299,6 @@ fn generate_query_resolver_methods(
         } else {
             // Get operation - return single entity
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,
@@ -349,7 +331,7 @@ fn generate_mutation_resolver_methods(
     svc_name: &str,
     methods: &[(
         &MethodDescriptorProto,
-        Option<crate::options::synapse::graphql::MethodOptions>,
+        crate::options::synapse::graphql::MutationOptions,
     )],
 ) -> Result<TokenStream, GeneratorError> {
     let mut method_tokens = Vec::new();
@@ -360,22 +342,12 @@ fn generate_mutation_resolver_methods(
         let method_name = method.name.as_deref().unwrap_or("");
 
         // Determine Rust method name (snake_case - async-graphql converts to camelCase automatically)
-        let field_name = opts
-            .as_ref()
-            .filter(|o| !o.name.is_empty())
-            .map(|o| o.name.to_snake_case())
-            .unwrap_or_else(|| method_name.to_snake_case());
+        let field_name = if !opts.name.is_empty() {
+            opts.name.to_snake_case()
+        } else {
+            method_name.to_snake_case()
+        };
         let field_ident = format_ident!("{}", field_name);
-
-        // Generate description if present
-        let description_attr = opts
-            .as_ref()
-            .filter(|o| !o.description.is_empty())
-            .map(|o| {
-                let desc = &o.description;
-                quote! { #[doc = #desc] }
-            })
-            .unwrap_or_else(|| quote! {});
 
         // gRPC method name (snake_case)
         let grpc_method = format_ident!("{}", method_name.to_snake_case());
@@ -391,18 +363,18 @@ fn generate_mutation_resolver_methods(
             .unwrap_or_else(|| format_ident!("()"));
 
         // Get output type from options
-        let output_type = opts
-            .as_ref()
-            .filter(|o| !o.output_type.is_empty())
-            .map(|o| format_ident!("{}", o.output_type))
-            .unwrap_or_else(|| format_ident!("{}", entity_name.to_upper_camel_case()));
+        let output_type = if !opts.output_type.is_empty() {
+            format_ident!("{}", opts.output_type)
+        } else {
+            format_ident!("{}", entity_name.to_upper_camel_case())
+        };
 
         // Get output field from response
-        let output_field = opts
-            .as_ref()
-            .filter(|o| !o.output_field.is_empty())
-            .map(|o| format_ident!("{}", o.output_field))
-            .unwrap_or_else(|| format_ident!("{}", entity_snake));
+        let output_field = if !opts.output_field.is_empty() {
+            format_ident!("{}", opts.output_field)
+        } else {
+            format_ident!("{}", entity_snake)
+        };
 
         // Determine operation type
         let is_create = method_name.to_lowercase().starts_with("create");
@@ -418,7 +390,6 @@ fn generate_mutation_resolver_methods(
         let resolver = if is_delete {
             // Delete operation - return bool
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,
@@ -434,7 +405,6 @@ fn generate_mutation_resolver_methods(
         } else if is_create {
             // Create operation - input is auto-generated from request, use From impl
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,
@@ -451,7 +421,6 @@ fn generate_mutation_resolver_methods(
         } else if is_update {
             // Update operation - id is separate, input uses to_request method
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,
@@ -469,7 +438,6 @@ fn generate_mutation_resolver_methods(
         } else {
             // Generic mutation
             quote! {
-                #description_attr
                 async fn #field_ident(
                     &self,
                     ctx: &Context<'_>,

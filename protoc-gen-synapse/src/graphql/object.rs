@@ -6,7 +6,7 @@
 use crate::error::GeneratorError;
 use crate::options::synapse::storage::{RelationDef, RelationType};
 use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_field_options, get_cached_graphql_message_options,
+    get_cached_entity_options, get_cached_graphql_field_options, get_cached_graphql_type_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
@@ -27,8 +27,8 @@ pub fn generate(
     // (they need GraphQL wrappers). filter.rs and connection.rs only auto-generate types
     // that are NOT already defined in proto.
 
-    // Check for graphql message options
-    let msg_opts = get_cached_graphql_message_options(file_name, msg_name);
+    // Check for graphql type options
+    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
 
     // Skip if no graphql options (only generate annotated messages)
     if msg_opts.is_none() {
@@ -43,7 +43,7 @@ pub fn generate(
     }
 
     // Determine if this is an input type
-    if opts.input_type {
+    if opts.input {
         return generate_input_type(file, message, &opts);
     }
 
@@ -55,7 +55,7 @@ pub fn generate(
 fn generate_object_type(
     file: &FileDescriptorProto,
     message: &DescriptorProto,
-    opts: &crate::options::synapse::graphql::MessageOptions,
+    opts: &crate::options::synapse::graphql::TypeOptions,
 ) -> Result<Option<File>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
@@ -64,11 +64,11 @@ fn generate_object_type(
     let rust_name = msg_name.to_upper_camel_case();
     let type_ident = format_ident!("{}", rust_name);
 
-    // GraphQL type name (can be customized via type_name option)
-    let graphql_name = if opts.type_name.is_empty() {
+    // GraphQL type name (can be customized via name option)
+    let graphql_name = if opts.name.is_empty() {
         rust_name.clone()
     } else {
-        opts.type_name.clone()
+        opts.name.clone()
     };
 
     // Generate struct fields
@@ -158,16 +158,16 @@ fn generate_object_type(
 fn generate_input_type(
     file: &FileDescriptorProto,
     message: &DescriptorProto,
-    opts: &crate::options::synapse::graphql::MessageOptions,
+    opts: &crate::options::synapse::graphql::TypeOptions,
 ) -> Result<Option<File>, GeneratorError> {
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
     // Rust struct name (always derived from message name)
-    let rust_name = if opts.type_name.is_empty() {
+    let rust_name = if opts.name.is_empty() {
         msg_name.to_upper_camel_case()
     } else {
-        opts.type_name.clone()
+        opts.name.clone()
     };
 
     let type_ident = format_ident!("{}", rust_name);

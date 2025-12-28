@@ -5,7 +5,7 @@
 //! - UpdateUserRequest → UpdateUserInput (all fields except id)
 
 use crate::error::GeneratorError;
-use crate::storage::seaorm::options::get_cached_graphql_method_options;
+use crate::storage::seaorm::options::get_cached_graphql_mutation_options;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use prost_types::compiler::code_generator_response::File;
 use prost_types::field_descriptor_proto::Type;
@@ -23,21 +23,15 @@ pub fn generate_inputs_for_service(
 
     for method in &service.method {
         let method_name = method.name.as_deref().unwrap_or("");
-        let method_opts = get_cached_graphql_method_options(file_name, svc_name, method_name);
+        let mutation_opts = get_cached_graphql_mutation_options(file_name, svc_name, method_name);
+
+        // Only process mutations (methods with synapse.graphql.mutation option)
+        let Some(opts) = mutation_opts else {
+            continue;
+        };
 
         // Skip if marked
-        if method_opts.as_ref().is_some_and(|o| o.skip) {
-            continue;
-        }
-
-        // Only process mutations (create/update operations)
-        let operation = method_opts
-            .as_ref()
-            .filter(|o| !o.operation.is_empty())
-            .map(|o| o.operation.as_str())
-            .unwrap_or("Query");
-
-        if operation != "Mutation" {
+        if opts.skip {
             continue;
         }
 
