@@ -1,0 +1,120 @@
+// Synapse GraphQL Context definitions
+//
+// These messages define the standard context structure that applications
+// can use with from_context field injection. Applications provide their
+// own implementation of these structures.
+
+syntax = "proto3";
+
+package synapse.graphql;
+
+// =============================================================================
+// Standard Context Structure
+// =============================================================================
+//
+// Applications should provide a context object with this structure:
+//
+//   struct AppContext {
+//       current_user: Option<CurrentUser>,
+//       claims: Option<Claims>,
+//       tenant: Option<Tenant>,
+//       request: RequestInfo,
+//   }
+//
+// Fields can be accessed via dotted paths in from_context:
+//   - "current_user.id"
+//   - "claims.sub"
+//   - "tenant.id"
+//   - "request.trace_id"
+
+// Current authenticated user information
+//
+// Applications should populate this from their authentication system
+// (e.g., JWT validation, session lookup, OAuth provider)
+message CurrentUser {
+  // User's internal ID (typically from your users table)
+  int64 id = 1;
+
+  // User's email address
+  string email = 2;
+
+  // User's display name
+  string name = 3;
+
+  // User's roles/permissions (e.g., ["admin", "editor"])
+  repeated string roles = 4;
+
+  // Organization/tenant the user belongs to (for multi-tenant apps)
+  optional int64 organization_id = 5;
+
+  // Whether the user's email is verified
+  bool email_verified = 6;
+
+  // Additional custom attributes
+  map<string, string> attributes = 10;
+}
+
+// JWT claims (when using token-based auth)
+//
+// Standard OIDC/JWT claims that can be accessed via from_context
+message Claims {
+  // Subject - typically the user ID from the identity provider
+  string sub = 1;
+
+  // Issuer - who issued the token
+  string iss = 2;
+
+  // Audience - intended recipient
+  repeated string aud = 3;
+
+  // Expiration time (Unix timestamp)
+  int64 exp = 4;
+
+  // Issued at time (Unix timestamp)
+  int64 iat = 5;
+
+  // JWT ID - unique identifier for the token
+  string jti = 6;
+
+  // Email claim (common in OIDC)
+  string email = 7;
+
+  // Name claim (common in OIDC)
+  string name = 8;
+
+  // Custom claims
+  map<string, string> custom = 10;
+}
+
+// Tenant information for multi-tenant applications
+message Tenant {
+  // Tenant ID
+  int64 id = 1;
+
+  // Tenant slug/subdomain
+  string slug = 2;
+
+  // Tenant name
+  string name = 3;
+
+  // Tenant-specific settings
+  map<string, string> settings = 10;
+}
+
+// Request metadata
+message RequestInfo {
+  // Distributed tracing ID
+  string trace_id = 1;
+
+  // Request ID
+  string request_id = 2;
+
+  // Client IP address
+  string ip = 3;
+
+  // User agent string
+  string user_agent = 4;
+
+  // Request headers (filtered for safety)
+  map<string, string> headers = 10;
+}

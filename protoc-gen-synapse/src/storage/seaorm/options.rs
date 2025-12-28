@@ -1312,6 +1312,36 @@ fn convert_to_graphql_field_options(value: &Value) -> Option<graphql::FieldOptio
         }
     }
 
+    // Parse from_context for context injection
+    if let Some(cow) = msg.get_field_by_name("from_context") {
+        if let Some(ctx_msg) = cow.as_ref().as_message() {
+            let mut ctx_source = graphql::ContextSource::default();
+
+            if let Some(path_cow) = ctx_msg.get_field_by_name("path") {
+                if let Value::String(s) = path_cow.as_ref() {
+                    ctx_source.path = s.clone();
+                }
+            }
+
+            if let Some(req_cow) = ctx_msg.get_field_by_name("required") {
+                if let Value::Bool(b) = req_cow.as_ref() {
+                    ctx_source.required = *b;
+                }
+            }
+
+            if let Some(err_cow) = ctx_msg.get_field_by_name("error_message") {
+                if let Value::String(s) = err_cow.as_ref() {
+                    ctx_source.error_message = s.clone();
+                }
+            }
+
+            // Only set if path is non-empty
+            if !ctx_source.path.is_empty() {
+                result.from_context = Some(ctx_source);
+            }
+        }
+    }
+
     Some(result)
 }
 

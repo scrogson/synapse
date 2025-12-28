@@ -40,6 +40,35 @@ message Deprecated {
   string reason = 1;
 }
 
+// Context injection source - populates a field from request context
+//
+// When set on a request/input field, the field is:
+// 1. Excluded from the GraphQL input type (client cannot set it)
+// 2. Automatically populated server-side from the specified context path
+//
+// The context object is provided by the application and typically contains:
+// - current_user: The authenticated user (id, email, roles, etc.)
+// - claims: JWT claims (sub, aud, exp, custom claims)
+// - tenant: Multi-tenant context (id, settings)
+// - request: Request metadata (ip, headers, trace_id)
+//
+// Example paths:
+// - "current_user.id" -> extracts user ID
+// - "claims.sub" -> extracts JWT subject
+// - "tenant.id" -> extracts tenant ID for multi-tenant apps
+message ContextSource {
+  // Dotted path to extract from context (e.g., "current_user.id")
+  string path = 1;
+
+  // If true (default), request fails with UNAUTHENTICATED if value is missing
+  // If false, uses type's default value (0, "", null)
+  bool required = 2;
+
+  // Custom error message when required value is missing
+  // Default: "Authentication required" or "Missing context: {path}"
+  string error_message = 3;
+}
+
 // Field-level GraphQL generation options
 message FieldOptions {
   // Skip this field from GraphQL schema (e.g., internal FK columns)
@@ -50,6 +79,21 @@ message FieldOptions {
 
   // Mark field as deprecated (presence indicates deprecated)
   Deprecated deprecated = 3;
+
+  // Populate this field from request context instead of client input
+  //
+  // When set, the field is automatically excluded from GraphQL input
+  // and populated server-side from the authenticated user's context.
+  //
+  // Example:
+  //   int64 user_id = 1 [(synapse.graphql.field).from_context = {
+  //     path: "current_user.id"
+  //     required: true
+  //   }];
+  //
+  // This ensures user_id is always set to the current user's ID,
+  // preventing clients from impersonating other users.
+  ContextSource from_context = 4;
 }
 
 // =============================================================================

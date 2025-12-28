@@ -1,11 +1,16 @@
 //! Auto-generated GraphQL input types from request messages
 //!
 //! Generates InputObject types from mutation request messages:
-//! - CreateUserRequest → CreateUserInput (all fields)
-//! - UpdateUserRequest → UpdateUserInput (all fields except id)
+//! - CreateUserRequest → CreateUserInput (all fields except context-injected)
+//! - UpdateUserRequest → UpdateUserInput (all fields except id and context-injected)
+//!
+//! Fields marked with `from_context` are excluded from the GraphQL input
+//! and populated server-side from the authentication context.
 
 use crate::error::GeneratorError;
-use crate::storage::seaorm::options::get_cached_graphql_mutation_options;
+use crate::storage::seaorm::options::{
+    get_cached_graphql_field_options, get_cached_graphql_mutation_options,
+};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use prost_types::compiler::code_generator_response::File;
 use prost_types::field_descriptor_proto::Type;
@@ -71,6 +76,19 @@ pub fn generate_inputs_for_service(
     Ok(files)
 }
 
+/// Information about a context-injected field
+struct ContextField {
+    /// Field name (snake_case)
+    name: String,
+    /// Rust type for the field
+    rust_type: proc_macro2::TokenStream,
+    /// Context path (e.g., "current_user.id")
+    path: String,
+    /// Whether the field is required (for future error handling)
+    #[allow(dead_code)]
+    required: bool,
+}
+
 /// Generate a GraphQL InputObject from a request message
 fn generate_input_type(
     file: &FileDescriptorProto,
@@ -78,22 +96,43 @@ fn generate_input_type(
     input_name: &str,
     is_update: bool,
 ) -> Result<Option<File>, GeneratorError> {
+    let file_name = file.name.as_deref().unwrap_or("");
+    let package = file.package.as_deref().unwrap_or("");
+    let msg_name = message.name.as_deref().unwrap_or("");
+
     let input_ident = format_ident!("{}", input_name);
-    let request_name = message.name.as_deref().unwrap_or("");
-    let request_ident = format_ident!("{}", request_name);
+    let request_ident = format_ident!("{}", msg_name);
 
     let mut field_tokens = Vec::new();
     let mut from_conversion_tokens = Vec::new();
     let mut self_conversion_tokens = Vec::new();
+    let mut context_fields: Vec<ContextField> = Vec::new();
 
     for field in &message.field {
         let field_name = field.name.as_deref().unwrap_or("");
+        let field_number = field.number.unwrap_or(0);
         let snake_name = field_name.to_snake_case();
         let field_ident = format_ident!("{}", snake_name);
 
         // For update operations, skip the id field (it's a separate argument)
         if is_update && field_name == "id" {
             continue;
+        }
+
+        // Check for from_context option - these fields are excluded from input
+        // and populated server-side
+        let field_opts = get_cached_graphql_field_options(file_name, msg_name, field_number);
+        if let Some(ref opts) = field_opts {
+            if let Some(ref ctx_source) = opts.from_context {
+                // Track this as a context-injected field
+                context_fields.push(ContextField {
+                    name: snake_name.clone(),
+                    rust_type: proto_type_to_rust_type(field),
+                    path: ctx_source.path.clone(),
+                    required: ctx_source.required,
+                });
+                continue; // Skip from input type
+            }
         }
 
         let is_optional = field.proto3_optional.unwrap_or(false);
@@ -118,9 +157,67 @@ fn generate_input_type(
         });
     }
 
-    // Build the From impl based on whether this is create or update
-    let from_impl = if is_update {
-        // Update: generate a `to_request` method that takes id
+    // Build the conversion impl based on whether we have context fields
+    let from_impl = if !context_fields.is_empty() {
+        // Has context fields - generate to_request method with context params
+        let ctx_params: Vec<_> = context_fields
+            .iter()
+            .map(|cf| {
+                let name = format_ident!("{}", cf.name);
+                let ty = &cf.rust_type;
+                quote! { #name: #ty }
+            })
+            .collect();
+
+        let ctx_fields_assign: Vec<_> = context_fields
+            .iter()
+            .map(|cf| {
+                let name = format_ident!("{}", cf.name);
+                quote! { #name }
+            })
+            .collect();
+
+        // Generate doc comment showing context paths
+        let ctx_doc: Vec<_> = context_fields
+            .iter()
+            .map(|cf| format!("- `{}`: from context path `{}`", cf.name, cf.path))
+            .collect();
+        let ctx_doc_str = ctx_doc.join("\n    /// ");
+
+        if is_update {
+            quote! {
+                impl #input_ident {
+                    /// Convert to proto request with the given id and context values
+                    ///
+                    /// Context-injected fields:
+                    #[doc = #ctx_doc_str]
+                    pub fn to_request(self, id: i64, #(#ctx_params),*) -> super::super::#request_ident {
+                        super::super::#request_ident {
+                            id,
+                            #(#ctx_fields_assign,)*
+                            #(#self_conversion_tokens)*
+                        }
+                    }
+                }
+            }
+        } else {
+            quote! {
+                impl #input_ident {
+                    /// Convert to proto request with context values
+                    ///
+                    /// Context-injected fields:
+                    #[doc = #ctx_doc_str]
+                    pub fn to_request(self, #(#ctx_params),*) -> super::super::#request_ident {
+                        super::super::#request_ident {
+                            #(#ctx_fields_assign,)*
+                            #(#self_conversion_tokens)*
+                        }
+                    }
+                }
+            }
+        }
+    } else if is_update {
+        // Update without context fields: generate to_request with just id
         quote! {
             impl #input_ident {
                 /// Convert to proto request with the given id
@@ -133,7 +230,7 @@ fn generate_input_type(
             }
         }
     } else {
-        // Create: simple From impl
+        // Create without context fields: simple From impl
         quote! {
             impl From<#input_ident> for super::super::#request_ident {
                 fn from(input: #input_ident) -> Self {
@@ -171,7 +268,6 @@ fn generate_input_type(
     };
 
     // Determine output file path
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}.rs",
         package.replace('.', "/"),

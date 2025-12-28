@@ -18,6 +18,7 @@ use tonic::transport::{Channel, Server as TonicServer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use synapse_unified_example::{
+    CurrentUser,
     iam::{
         user_service_server::UserServiceServer,
         organization_service_server::OrganizationServiceServer,
@@ -82,7 +83,18 @@ async fn graphql_handler(
     State(schema): State<AppSchema>,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
+    // In a real app, extract CurrentUser from JWT/session headers
+    // For now, use a mock authenticated user (the test user we created)
+    let current_user = CurrentUser {
+        id: 1, // ID of test user we inserted
+        email: "test@example.com".to_string(),
+        name: "Test User".to_string(),
+    };
+
+    schema
+        .execute(req.into_inner().data(current_user))
+        .await
+        .into()
 }
 
 async fn apollo_sandbox() -> impl axum::response::IntoResponse {

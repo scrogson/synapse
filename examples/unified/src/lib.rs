@@ -18,3 +18,20 @@
 mod generated;
 
 pub use generated::*;
+
+/// Current authenticated user context
+///
+/// This struct is populated from authentication middleware and made
+/// available to GraphQL resolvers via `ctx.data::<CurrentUser>()`.
+///
+/// Fields marked with `from_context` in proto definitions will be
+/// automatically populated from this context.
+#[derive(Debug, Clone)]
+pub struct CurrentUser {
+    /// User's internal ID
+    pub id: i64,
+    /// User's email address
+    pub email: String,
+    /// User's display name
+    pub name: String,
+}

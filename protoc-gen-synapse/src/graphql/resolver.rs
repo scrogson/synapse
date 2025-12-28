@@ -2,17 +2,64 @@
 //!
 //! Generates async-graphql Query/Mutation resolvers from protobuf service definitions.
 //! Resolvers use gRPC clients (tonic-generated) for data fetching.
+//!
+//! For mutations with context-injected fields, the resolver extracts values from
+//! the GraphQL context and passes them to `input.to_request()`.
 
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::{
-    get_cached_graphql_mutation_options, get_cached_graphql_query_options,
-    get_cached_graphql_service_options,
+    get_cached_graphql_field_options, get_cached_graphql_mutation_options,
+    get_cached_graphql_query_options, get_cached_graphql_service_options,
 };
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
 use prost_types::compiler::code_generator_response::File;
 use prost_types::{FileDescriptorProto, MethodDescriptorProto, ServiceDescriptorProto};
 use quote::{format_ident, quote};
+
+/// Information about context-injected fields for a request message
+struct ContextFieldInfo {
+    /// Field name (snake_case)
+    name: String,
+    /// Context path (e.g., "current_user.id")
+    path: String,
+}
+
+/// Check a request message for context-injected fields
+fn get_context_fields(
+    file: &FileDescriptorProto,
+    request_type_name: &str,
+) -> Vec<ContextFieldInfo> {
+    let file_name = file.name.as_deref().unwrap_or("");
+
+    // Find the request message in the file
+    let msg = file
+        .message_type
+        .iter()
+        .find(|m| m.name.as_deref() == Some(request_type_name));
+
+    let Some(message) = msg else {
+        return Vec::new();
+    };
+
+    let mut context_fields = Vec::new();
+
+    for field in &message.field {
+        let field_name = field.name.as_deref().unwrap_or("");
+        let field_number = field.number.unwrap_or(0);
+
+        if let Some(opts) = get_cached_graphql_field_options(file_name, request_type_name, field_number) {
+            if let Some(ctx_source) = opts.from_context {
+                context_fields.push(ContextFieldInfo {
+                    name: field_name.to_snake_case(),
+                    path: ctx_source.path,
+                });
+            }
+        }
+    }
+
+    context_fields
+}
 
 /// Generate GraphQL resolvers from a proto service
 pub fn generate(
@@ -161,7 +208,7 @@ fn generate_mutation_struct(
     let client_ident = format_ident!("{}", client_type);
 
     // Generate resolver methods
-    let resolver_methods = generate_mutation_resolver_methods(svc_name, methods)?;
+    let resolver_methods = generate_mutation_resolver_methods(file, svc_name, methods)?;
 
     let code = quote! {
         //! GraphQL Mutation resolvers for #svc_name
@@ -328,6 +375,7 @@ fn generate_query_resolver_methods(
 
 /// Generate Mutation resolver methods (create, update, delete operations)
 fn generate_mutation_resolver_methods(
+    file: &FileDescriptorProto,
     svc_name: &str,
     methods: &[(
         &MethodDescriptorProto,
@@ -352,15 +400,14 @@ fn generate_mutation_resolver_methods(
         // gRPC method name (snake_case)
         let grpc_method = format_ident!("{}", method_name.to_snake_case());
 
-        // Get request type
-        let request_type = method
+        // Get request type name (without package prefix)
+        let request_type_name = method
             .input_type
             .as_ref()
-            .map(|t| {
-                let name = t.rsplit('.').next().unwrap_or(t).to_upper_camel_case();
-                format_ident!("{}", name)
-            })
-            .unwrap_or_else(|| format_ident!("()"));
+            .map(|t| t.rsplit('.').next().unwrap_or(t).to_string())
+            .unwrap_or_default();
+
+        let request_type = format_ident!("{}", request_type_name.to_upper_camel_case());
 
         // Get output type from options
         let output_type = if !opts.output_type.is_empty() {
@@ -387,6 +434,13 @@ fn generate_mutation_resolver_methods(
             request_type.to_string().replace("Request", "Input")
         );
 
+        // Check for context-injected fields in create operations
+        let context_fields = if is_create {
+            get_context_fields(file, &request_type_name)
+        } else {
+            Vec::new()
+        };
+
         let resolver = if is_delete {
             // Delete operation - return bool
             quote! {
@@ -402,8 +456,48 @@ fn generate_mutation_resolver_methods(
                     Ok(response.into_inner().success)
                 }
             }
+        } else if is_create && !context_fields.is_empty() {
+            // Create operation with context-injected fields
+            // Extract values from context and call to_request()
+            let ctx_extractions: Vec<_> = context_fields
+                .iter()
+                .map(|cf| {
+                    let field_ident = format_ident!("{}", cf.name);
+                    let path = &cf.path;
+                    // For now, generate a placeholder that extracts from CurrentUser
+                    // The actual implementation depends on the context type
+                    quote! {
+                        let #field_ident = ctx
+                            .data::<crate::CurrentUser>()
+                            .map_err(|_| async_graphql::Error::new(format!("Authentication required for field '{}' (from context path: {})", stringify!(#field_ident), #path)))?
+                            .id;
+                    }
+                })
+                .collect();
+
+            let ctx_args: Vec<_> = context_fields
+                .iter()
+                .map(|cf| format_ident!("{}", cf.name))
+                .collect();
+
+            quote! {
+                async fn #field_ident(
+                    &self,
+                    ctx: &Context<'_>,
+                    input: super::#derived_input_type,
+                ) -> Result<super::#output_type> {
+                    let client = ctx.data_unchecked::<Client>();
+                    // Extract context-injected fields
+                    #(#ctx_extractions)*
+                    let request = input.to_request(#(#ctx_args),*);
+                    let response = client.clone().#grpc_method(request).await
+                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                    Ok(response.into_inner().#output_field.map(super::#output_type::from)
+                        .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
+                }
+            }
         } else if is_create {
-            // Create operation - input is auto-generated from request, use From impl
+            // Create operation without context fields - use From impl
             quote! {
                 async fn #field_ident(
                     &self,
@@ -455,4 +549,5 @@ fn generate_mutation_resolver_methods(
         method_tokens.push(resolver);
     }
 
-    Ok(quote! { #(#method_tokens)* })}
+    Ok(quote! { #(#method_tokens)* })
+}
