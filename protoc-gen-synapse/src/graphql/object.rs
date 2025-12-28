@@ -60,14 +60,16 @@ fn generate_object_type(
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
-    // Determine type name
-    let type_name = if opts.type_name.is_empty() {
-        msg_name.to_upper_camel_case()
+    // Rust struct name (always derived from message name for consistency)
+    let rust_name = msg_name.to_upper_camel_case();
+    let type_ident = format_ident!("{}", rust_name);
+
+    // GraphQL type name (can be customized via type_name option)
+    let graphql_name = if opts.type_name.is_empty() {
+        rust_name.clone()
     } else {
         opts.type_name.clone()
     };
-
-    let type_ident = format_ident!("{}", type_name);
 
     // Generate struct fields
     let struct_fields = generate_struct_fields(file_name, msg_name, &message.field)?;
@@ -79,21 +81,28 @@ fn generate_object_type(
     // Generate relation resolver methods from storage options
     let entity_opts = get_cached_entity_options(file_name, msg_name);
     let relation_resolvers = if let Some(ref entity) = entity_opts {
-        generate_relation_resolvers(&type_name, &entity.relations, &message.field)?
+        generate_relation_resolvers(&rust_name, &entity.relations, &message.field)?
     } else {
         quote! {}
     };
 
     // Generate From impl for proto conversion
-    let from_impl = generate_from_impl(file, message, &type_name)?;
+    let from_impl = generate_from_impl(file, message, &rust_name)?;
 
     // Check if this implements Node interface
     let node_impl = if opts.node {
         // Find the id field to get its type
         let id_field = message.field.iter().find(|f| f.name.as_deref() == Some("id"));
-        generate_node_methods(&type_name, id_field)
+        generate_node_methods(&graphql_name, id_field)
     } else {
         quote! {}
+    };
+
+    // Generate the #[Object] attribute, with name if graphql_name differs from rust_name
+    let object_attr = if graphql_name != rust_name {
+        quote! { #[Object(name = #graphql_name)] }
+    } else {
+        quote! { #[Object] }
     };
 
     let code = quote! {
@@ -112,7 +121,7 @@ fn generate_object_type(
             #struct_fields
         }
 
-        #[Object]
+        #object_attr
         impl #type_ident {
             #node_impl
             #resolver_methods
@@ -135,7 +144,7 @@ fn generate_object_type(
     let output_path = format!(
         "{}/graphql/{}.rs",
         package.replace('.', "/"),
-        type_name.to_snake_case()
+        rust_name.to_snake_case()
     );
 
     Ok(Some(File {
@@ -154,14 +163,14 @@ fn generate_input_type(
     let file_name = file.name.as_deref().unwrap_or("");
     let msg_name = message.name.as_deref().unwrap_or("");
 
-    // Determine type name
-    let type_name = if opts.type_name.is_empty() {
+    // Rust struct name (always derived from message name)
+    let rust_name = if opts.type_name.is_empty() {
         msg_name.to_upper_camel_case()
     } else {
         opts.type_name.clone()
     };
 
-    let type_ident = format_ident!("{}", type_name);
+    let type_ident = format_ident!("{}", rust_name);
 
     // Generate struct fields for input type
     let struct_fields = generate_input_fields(file_name, msg_name, &message.field)?;
@@ -231,7 +240,7 @@ fn generate_input_type(
     let output_path = format!(
         "{}/graphql/{}.rs",
         package.replace('.', "/"),
-        type_name.to_snake_case()
+        rust_name.to_snake_case()
     );
 
     Ok(Some(File {
@@ -657,7 +666,30 @@ fn generate_single_relation_resolver(
     }
 
     let method_ident = format_ident!("{}", relation_name.to_snake_case());
-    let related_ident = format_ident!("{}", related_type.to_upper_camel_case());
+
+    // Check if this is a cross-package relation (contains a dot like "iam.User")
+    let (related_path, related_type_name) = if related_type.contains('.') {
+        // Cross-package relation: parse package and type
+        let parts: Vec<&str> = related_type.rsplitn(2, '.').collect();
+        let type_name = parts[0];
+        let package = parts.get(1).copied().unwrap_or("");
+
+        // Build path to cross-package GraphQL type
+        // From blog/graphql/author.rs:
+        //   super = blog::graphql
+        //   super::super = blog
+        //   super::super::super = generated root
+        //   super::super::super::iam::graphql::User = target
+        let package_ident = format_ident!("{}", package);
+        let type_ident = format_ident!("{}", type_name.to_upper_camel_case());
+        (quote! { super::super::super::#package_ident::graphql::#type_ident }, type_name.to_string())
+    } else {
+        // Same-package relation: use super prefix
+        let type_ident = format_ident!("{}", related_type.to_upper_camel_case());
+        (quote! { super::#type_ident }, related_type.clone())
+    };
+
+    let related_ident = format_ident!("{}", related_type_name.to_upper_camel_case());
 
     // Check if the FK field is optional (proto3_optional)
     let fk_snake = foreign_key.to_snake_case();
@@ -786,8 +818,20 @@ fn generate_single_relation_resolver(
             }
 
             let fk_ident = format_ident!("{}", foreign_key.to_snake_case());
-            let loader_name = format!("{}Loader", related_type.to_upper_camel_case());
-            let loader_ident = format_ident!("{}", loader_name);
+
+            // Build loader path (follows same pattern as related_path)
+            let loader_path = if related_type.contains('.') {
+                // Cross-package: super::super::super::iam::graphql::UserLoader
+                let parts: Vec<&str> = related_type.rsplitn(2, '.').collect();
+                let type_name = parts[0];
+                let package = parts.get(1).copied().unwrap_or("");
+                let package_ident = format_ident!("{}", package);
+                let loader_ident = format_ident!("{}Loader", type_name.to_upper_camel_case());
+                quote! { super::super::super::#package_ident::graphql::#loader_ident }
+            } else {
+                let loader_ident = format_ident!("{}Loader", related_type.to_upper_camel_case());
+                quote! { super::#loader_ident }
+            };
 
             // For BELONGS_TO, we need the FK on this type, not the related type
             // The FK is on the current entity pointing to the related entity
@@ -798,11 +842,11 @@ fn generate_single_relation_resolver(
                     async fn #method_ident(
                         &self,
                         ctx: &Context<'_>,
-                    ) -> Result<Option<super::#related_ident>> {
+                    ) -> Result<Option<#related_path>> {
                         let Some(fk) = self.#fk_ident else {
                             return Ok(None);
                         };
-                        let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                        let loader = ctx.data_unchecked::<DataLoader<#loader_path>>();
                         Ok(loader.load_one(fk).await?)
                     }
                 })
@@ -813,8 +857,8 @@ fn generate_single_relation_resolver(
                     async fn #method_ident(
                         &self,
                         ctx: &Context<'_>,
-                    ) -> Result<Option<super::#related_ident>> {
-                        let loader = ctx.data_unchecked::<DataLoader<super::#loader_ident>>();
+                    ) -> Result<Option<#related_path>> {
+                        let loader = ctx.data_unchecked::<DataLoader<#loader_path>>();
                         Ok(loader.load_one(self.#fk_ident).await?)
                     }
                 })

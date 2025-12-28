@@ -16,7 +16,7 @@ A GraphQL gateway that federates multiple gRPC services into a unified API.
        ┌───────────┐   ┌───────────┐   ┌───────────┐
        │   Blog    │   │   IAM     │   │  (Other)  │
        │  (gRPC)   │   │  (gRPC)   │   │  Services │
-       │  :50060   │   │  :50051   │   │           │
+       │  :50060   │   │  :50061   │   │           │
        └───────────┘   └───────────┘   └───────────┘
 ```
 
@@ -112,7 +112,7 @@ When services have overlapping entity names (like `User` in both Blog and IAM), 
 
 Environment variables:
 - `BLOG_GRPC_ENDPOINT` - Blog service address (default: `http://127.0.0.1:50060`)
-- `IAM_GRPC_ENDPOINT` - IAM service address (default: `http://127.0.0.1:50051`)
+- `IAM_GRPC_ENDPOINT` - IAM service address (default: `http://127.0.0.1:50061`)
 - `GATEWAY_ADDR` - Gateway listen address (default: `0.0.0.0:4000`)
 
 ## DataLoaders

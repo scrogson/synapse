@@ -8,6 +8,7 @@ exclude = [
     "examples/full-stack",
     "examples/iam",
     "examples/gateway",
+    "examples/unified",
 ]
 
 [workspace.package]

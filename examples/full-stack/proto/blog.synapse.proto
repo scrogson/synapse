@@ -9,36 +9,36 @@ import "synapse/relay/types.proto";
 import "blog.entities.proto";
 
 
-// User types
-message UserFilter {
+// Author types
+message AuthorFilter {
   optional synapse.relay.IntFilter id = 1;
-  optional synapse.relay.StringFilter email = 2;
-  optional synapse.relay.StringFilter name = 3;
+  optional synapse.relay.IntFilter user_id = 2;
+  optional synapse.relay.StringFilter pen_name = 3;
   optional synapse.relay.StringFilter bio = 4;
   optional synapse.relay.TimestampFilter created_at = 5;
   optional synapse.relay.TimestampFilter updated_at = 6;
   // Logical operators
-  repeated UserFilter and = 7;
-  repeated UserFilter or = 8;
-  optional UserFilter not = 9;
+  repeated AuthorFilter and = 7;
+  repeated AuthorFilter or = 8;
+  optional AuthorFilter not = 9;
 }
 
-message UserOrderBy {
+message AuthorOrderBy {
   optional synapse.relay.OrderDirection id = 1;
-  optional synapse.relay.OrderDirection email = 2;
-  optional synapse.relay.OrderDirection name = 3;
+  optional synapse.relay.OrderDirection user_id = 2;
+  optional synapse.relay.OrderDirection pen_name = 3;
   optional synapse.relay.OrderDirection bio = 4;
   optional synapse.relay.OrderDirection created_at = 5;
   optional synapse.relay.OrderDirection updated_at = 6;
 }
 
-message UserEdge {
+message AuthorEdge {
   string cursor = 1;
-  User node = 2;
+  Author node = 2;
 }
 
-message UserConnection {
-  repeated UserEdge edges = 1;
+message AuthorConnection {
+  repeated AuthorEdge edges = 1;
   synapse.relay.PageInfo page_info = 2;
 }
 

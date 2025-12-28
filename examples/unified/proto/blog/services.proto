@@ -5,18 +5,80 @@ package blog;
 import "synapse/graphql/options.proto";
 import "synapse/grpc/options.proto";
 import "synapse/storage/options.proto";
+import "synapse/relay/types.proto";
+import "blog/entities.proto";
 
-// Entity definitions
-import "blog.entities.proto";
+// =============================================================================
+// Filter & Connection Types
+// =============================================================================
 
-// Auto-generated types (filters, connections, edges, PageInfo, OrderDirection)
-import "blog.synapse.proto";
+message AuthorFilter {
+  optional synapse.relay.IntFilter id = 1;
+  optional synapse.relay.IntFilter user_id = 2;
+  optional synapse.relay.StringFilter pen_name = 3;
+  optional synapse.relay.StringFilter bio = 4;
+  optional synapse.relay.TimestampFilter created_at = 5;
+  optional synapse.relay.TimestampFilter updated_at = 6;
+  repeated AuthorFilter and = 7;
+  repeated AuthorFilter or = 8;
+  optional AuthorFilter not = 9;
+}
+
+message AuthorOrderBy {
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection user_id = 2;
+  optional synapse.relay.OrderDirection pen_name = 3;
+  optional synapse.relay.OrderDirection bio = 4;
+  optional synapse.relay.OrderDirection created_at = 5;
+  optional synapse.relay.OrderDirection updated_at = 6;
+}
+
+message AuthorEdge {
+  string cursor = 1;
+  Author node = 2;
+}
+
+message AuthorConnection {
+  repeated AuthorEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
+
+message PostFilter {
+  optional synapse.relay.IntFilter id = 1;
+  optional synapse.relay.StringFilter title = 2;
+  optional synapse.relay.StringFilter content = 3;
+  optional synapse.relay.BoolFilter published = 4;
+  optional synapse.relay.IntFilter author_id = 5;
+  optional synapse.relay.TimestampFilter created_at = 6;
+  optional synapse.relay.TimestampFilter updated_at = 7;
+  repeated PostFilter and = 8;
+  repeated PostFilter or = 9;
+  optional PostFilter not = 10;
+}
+
+message PostOrderBy {
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection title = 2;
+  optional synapse.relay.OrderDirection content = 3;
+  optional synapse.relay.OrderDirection author_id = 4;
+  optional synapse.relay.OrderDirection created_at = 5;
+  optional synapse.relay.OrderDirection updated_at = 6;
+}
+
+message PostEdge {
+  string cursor = 1;
+  Post node = 2;
+}
+
+message PostConnection {
+  repeated PostEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
 
 // =============================================================================
 // Request/Response Messages
 // =============================================================================
 
-// Author service messages
 message GetAuthorRequest {
   int64 id = 1;
 }
@@ -26,12 +88,10 @@ message GetAuthorResponse {
 }
 
 message ListAuthorsRequest {
-  // Relay pagination
   optional string after = 1;
   optional string before = 2;
   optional int32 first = 3;
   optional int32 last = 4;
-  // Filter & ordering
   optional AuthorFilter filter = 5;
   optional AuthorOrderBy order_by = 6;
 }
@@ -50,7 +110,6 @@ message UpdateAuthorRequest {
   int64 id = 1;
   optional string pen_name = 2;
   optional string bio = 3;
-  // Note: user_id is immutable after creation
 }
 
 message UpdateAuthorResponse {
@@ -65,7 +124,6 @@ message DeleteAuthorResponse {
   bool success = 1;
 }
 
-// Post service messages
 message GetPostRequest {
   int64 id = 1;
 }
@@ -75,12 +133,10 @@ message GetPostResponse {
 }
 
 message ListPostsRequest {
-  // Relay pagination
   optional string after = 1;
   optional string before = 2;
   optional int32 first = 3;
   optional int32 last = 4;
-  // Filter & ordering
   optional PostFilter filter = 5;
   optional PostOrderBy order_by = 6;
 }
@@ -101,7 +157,6 @@ message UpdatePostRequest {
   optional string title = 2;
   optional string content = 3;
   optional bool published = 4;
-  optional int64 author_id = 5;
 }
 
 message UpdatePostResponse {
@@ -128,7 +183,6 @@ service AuthorService {
     generate_implementation: true
   };
 
-  // Queries
   rpc GetAuthor(GetAuthorRequest) returns (GetAuthorResponse) {
     option (synapse.graphql.method) = {
       name: "author"
@@ -147,7 +201,6 @@ service AuthorService {
     };
   }
 
-  // Mutations
   rpc CreateAuthor(CreateAuthorRequest) returns (CreateAuthorResponse) {
     option (synapse.graphql.method) = {
       name: "createAuthor"
@@ -185,7 +238,6 @@ service PostService {
     generate_implementation: true
   };
 
-  // Queries
   rpc GetPost(GetPostRequest) returns (GetPostResponse) {
     option (synapse.graphql.method) = {
       name: "post"
@@ -204,7 +256,6 @@ service PostService {
     };
   }
 
-  // Mutations
   rpc CreatePost(CreatePostRequest) returns (CreatePostResponse) {
     option (synapse.graphql.method) = {
       name: "createPost"

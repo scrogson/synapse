@@ -3,19 +3,27 @@ syntax = "proto3";
 package blog;
 
 import "google/protobuf/timestamp.proto";
-import "synapse/storage/options.proto";
 import "synapse/graphql/options.proto";
+import "synapse/storage/options.proto";
+import "iam/entities.proto";
 
 // =============================================================================
-// Entities
+// Blog Entities
 // =============================================================================
 
-// Author entity - a blog author profile linked to an IAM User
+// Author - a blog author profile linked to an IAM User
 message Author {
   option (synapse.graphql.message) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "authors"
     relations: [
+      {
+        name: "user"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "iam.User"
+        foreign_key: "user_id"
+        references: "id"
+      },
       {
         name: "posts"
         type: RELATION_TYPE_HAS_MANY
@@ -23,8 +31,6 @@ message Author {
         foreign_key: "author_id"
       }
     ]
-    // Note: user_id references iam.User, but cross-service relations
-    // are resolved at the gateway level, not within this service.
   };
 
   int64 id = 1 [(synapse.storage.column) = {
@@ -48,7 +54,7 @@ message Author {
   }];
 }
 
-// Post entity
+// Post - a blog post written by an author
 message Post {
   option (synapse.graphql.message) = { node: true };
   option (synapse.storage.entity) = {

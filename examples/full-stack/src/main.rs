@@ -26,13 +26,13 @@ use tonic::transport::{Channel, Server as TonicServer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use synapse_full_stack_example::blog::{
-    user_service_server::UserServiceServer,
+    author_service_server::AuthorServiceServer,
     post_service_server::PostServiceServer,
-    user_service_client::UserServiceClient,
+    author_service_client::AuthorServiceClient,
     post_service_client::PostServiceClient,
-    SeaOrmUserServiceStorage,
+    SeaOrmAuthorServiceStorage,
     SeaOrmPostServiceStorage,
-    UserServiceGrpcService,
+    AuthorServiceGrpcService,
     PostServiceGrpcService,
     graphql::{build_schema, AppSchema},
 };
@@ -89,11 +89,11 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Database connected!");
 
     // Create storage implementations for gRPC server
-    let user_storage = SeaOrmUserServiceStorage::new(db.clone());
+    let author_storage = SeaOrmAuthorServiceStorage::new(db.clone());
     let post_storage = SeaOrmPostServiceStorage::new(db.clone());
 
     // Wrap storage in gRPC services
-    let user_grpc = UserServiceGrpcService::new(user_storage);
+    let author_grpc = AuthorServiceGrpcService::new(author_storage);
     let post_grpc = PostServiceGrpcService::new(post_storage);
 
     // gRPC server address
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start gRPC server in background task
     let grpc_server = TonicServer::builder()
-        .add_service(UserServiceServer::new(user_grpc))
+        .add_service(AuthorServiceServer::new(author_grpc))
         .add_service(PostServiceServer::new(post_grpc))
         .serve(grpc_addr);
 
@@ -131,11 +131,11 @@ async fn main() -> anyhow::Result<()> {
         .connect()
         .await?;
 
-    let user_client = UserServiceClient::new(channel.clone());
+    let author_client = AuthorServiceClient::new(channel.clone());
     let post_client = PostServiceClient::new(channel);
 
     // Build GraphQL schema with gRPC clients (enables DataLoader batching)
-    let schema = build_schema(user_client, post_client);
+    let schema = build_schema(author_client, post_client);
 
     tracing::info!("GraphQL server listening on {}", graphql_addr);
     tracing::info!("Apollo Sandbox available at http://{}/", graphql_addr);

@@ -26,11 +26,18 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             })?;
 
         // Collect entities (messages with synapse.storage.entity option)
-        // Search all files (including imports) for entities
+        // Only collect entities from files in the SAME package to avoid duplication
+        let main_package = file_descriptor.package.as_deref().unwrap_or("");
         let mut entities: Vec<&prost_types::DescriptorProto> = Vec::new();
         let mut entity_file_map: Vec<(&prost_types::FileDescriptorProto, &prost_types::DescriptorProto)> = Vec::new();
 
         for proto_file in &request.proto_file {
+            // Only process files from the same package
+            let file_package = proto_file.package.as_deref().unwrap_or("");
+            if file_package != main_package {
+                continue;
+            }
+
             let proto_file_name = proto_file.name.as_deref().unwrap_or("");
             for message in &proto_file.message_type {
                 let msg_name = message.name.as_deref().unwrap_or("");

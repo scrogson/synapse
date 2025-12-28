@@ -23,19 +23,28 @@ pub struct PackageInfo {
     pub services: Vec<String>,
 }
 
-/// Collect package information from all proto files (for entities in imports)
+/// Collect package information from files in the same package
 pub fn collect_package_info_all_files(
     all_files: &[FileDescriptorProto],
     main_file: &FileDescriptorProto,
 ) -> PackageInfo {
     let main_file_name = main_file.name.as_deref().unwrap_or("");
+    let main_package = main_file.package.as_deref().unwrap_or("");
     let mut info = PackageInfo {
         entities: Vec::new(),
         services: Vec::new(),
     };
 
-    // Collect entities from ALL files
+    // Collect entities only from files in the SAME package
+    // This prevents generating entity code for imported types from other packages
     for file in all_files {
+        let file_package = file.package.as_deref().unwrap_or("");
+
+        // Only process files from the same package
+        if file_package != main_package {
+            continue;
+        }
+
         let file_name = file.name.as_deref().unwrap_or("");
         for message in &file.message_type {
             let msg_name = message.name.as_deref().unwrap_or("");

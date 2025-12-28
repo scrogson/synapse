@@ -1,0 +1,79 @@
+[package]
+name = "synapse-unified-example"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["full"]
+
+# Full monolith - everything in one binary
+full = ["gateway", "iam-service", "blog-service"]
+
+# GraphQL gateway only (connects to gRPC services)
+gateway = []
+
+# Individual gRPC services (with storage)
+iam-service = ["storage"]
+blog-service = ["storage"]
+
+# Storage implementations (SeaORM)
+storage = ["sea-orm", "sea-orm-migration"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database (optional - only for services with storage)
+sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
+sea-orm-migration = { version = "1", optional = true }
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# GraphQL
+async-graphql = { version = "7", features = ["dataloader"] }
+async-graphql-axum = "7"
+
+# Web framework
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Utilities
+base64 = "0.22"
+chrono = "0.4"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+
+[build-dependencies]
+tonic-build = "0.12"
+prost-build = "0.13"
+
+[[bin]]
+name = "monolith"
+path = "src/bin/monolith.rs"
+required-features = ["full"]
+
+[[bin]]
+name = "gateway"
+path = "src/bin/gateway.rs"
+required-features = ["gateway"]
+
+[[bin]]
+name = "iam-service"
+path = "src/bin/iam_service.rs"
+required-features = ["iam-service"]
+
+[[bin]]
+name = "blog-service"
+path = "src/bin/blog_service.rs"
+required-features = ["blog-service"]

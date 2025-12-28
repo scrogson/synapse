@@ -1,0 +1,426 @@
+syntax = "proto3";
+
+package iam;
+
+import "synapse/graphql/options.proto";
+import "synapse/grpc/options.proto";
+import "synapse/storage/options.proto";
+import "synapse/relay/types.proto";
+import "iam/entities.proto";
+
+// =============================================================================
+// Filter & Connection Types
+// =============================================================================
+
+message OrganizationFilter {
+  optional synapse.relay.IntFilter id = 1;
+  optional synapse.relay.StringFilter name = 2;
+  optional synapse.relay.StringFilter slug = 3;
+  optional synapse.relay.StringFilter description = 4;
+  optional synapse.relay.TimestampFilter created_at = 5;
+  optional synapse.relay.TimestampFilter updated_at = 6;
+  repeated OrganizationFilter and = 7;
+  repeated OrganizationFilter or = 8;
+  optional OrganizationFilter not = 9;
+}
+
+message OrganizationOrderBy {
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection name = 2;
+  optional synapse.relay.OrderDirection slug = 3;
+  optional synapse.relay.OrderDirection description = 4;
+  optional synapse.relay.OrderDirection created_at = 5;
+  optional synapse.relay.OrderDirection updated_at = 6;
+}
+
+message OrganizationEdge {
+  string cursor = 1;
+  Organization node = 2;
+}
+
+message OrganizationConnection {
+  repeated OrganizationEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
+
+message TeamFilter {
+  optional synapse.relay.IntFilter id = 1;
+  optional synapse.relay.StringFilter name = 2;
+  optional synapse.relay.StringFilter slug = 3;
+  optional synapse.relay.StringFilter description = 4;
+  optional synapse.relay.IntFilter organization_id = 5;
+  optional synapse.relay.TimestampFilter created_at = 6;
+  optional synapse.relay.TimestampFilter updated_at = 7;
+  repeated TeamFilter and = 8;
+  repeated TeamFilter or = 9;
+  optional TeamFilter not = 10;
+}
+
+message TeamOrderBy {
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection name = 2;
+  optional synapse.relay.OrderDirection slug = 3;
+  optional synapse.relay.OrderDirection description = 4;
+  optional synapse.relay.OrderDirection organization_id = 5;
+  optional synapse.relay.OrderDirection created_at = 6;
+  optional synapse.relay.OrderDirection updated_at = 7;
+}
+
+message TeamEdge {
+  string cursor = 1;
+  Team node = 2;
+}
+
+message TeamConnection {
+  repeated TeamEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
+
+message UserFilter {
+  optional synapse.relay.IntFilter id = 1;
+  optional synapse.relay.StringFilter email = 2;
+  optional synapse.relay.StringFilter name = 3;
+  optional synapse.relay.StringFilter avatar_url = 4;
+  optional synapse.relay.IntFilter organization_id = 5;
+  optional synapse.relay.BoolFilter is_active = 6;
+  optional synapse.relay.TimestampFilter created_at = 7;
+  optional synapse.relay.TimestampFilter updated_at = 8;
+  repeated UserFilter and = 9;
+  repeated UserFilter or = 10;
+  optional UserFilter not = 11;
+}
+
+message UserOrderBy {
+  optional synapse.relay.OrderDirection id = 1;
+  optional synapse.relay.OrderDirection email = 2;
+  optional synapse.relay.OrderDirection name = 3;
+  optional synapse.relay.OrderDirection avatar_url = 4;
+  optional synapse.relay.OrderDirection organization_id = 5;
+  optional synapse.relay.OrderDirection created_at = 6;
+  optional synapse.relay.OrderDirection updated_at = 7;
+}
+
+message UserEdge {
+  string cursor = 1;
+  User node = 2;
+}
+
+message UserConnection {
+  repeated UserEdge edges = 1;
+  synapse.relay.PageInfo page_info = 2;
+}
+
+// =============================================================================
+// Request/Response Messages
+// =============================================================================
+
+message GetUserRequest {
+  int64 id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message ListUsersRequest {
+  optional string after = 1;
+  optional string before = 2;
+  optional int32 first = 3;
+  optional int32 last = 4;
+  optional UserFilter filter = 5;
+  optional UserOrderBy order_by = 6;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  string name = 2;
+  optional string avatar_url = 3;
+  optional int64 organization_id = 4;
+}
+
+message CreateUserResponse {
+  User user = 1;
+}
+
+message UpdateUserRequest {
+  int64 id = 1;
+  optional string email = 2;
+  optional string name = 3;
+  optional string avatar_url = 4;
+  optional int64 organization_id = 5;
+  optional bool is_active = 6;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+}
+
+message DeleteUserRequest {
+  int64 id = 1;
+}
+
+message DeleteUserResponse {
+  bool success = 1;
+}
+
+message GetOrganizationRequest {
+  int64 id = 1;
+}
+
+message GetOrganizationResponse {
+  Organization organization = 1;
+}
+
+message ListOrganizationsRequest {
+  optional string after = 1;
+  optional string before = 2;
+  optional int32 first = 3;
+  optional int32 last = 4;
+  optional OrganizationFilter filter = 5;
+  optional OrganizationOrderBy order_by = 6;
+}
+
+message CreateOrganizationRequest {
+  string name = 1;
+  string slug = 2;
+  optional string description = 3;
+}
+
+message CreateOrganizationResponse {
+  Organization organization = 1;
+}
+
+message UpdateOrganizationRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string slug = 3;
+  optional string description = 4;
+}
+
+message UpdateOrganizationResponse {
+  Organization organization = 1;
+}
+
+message DeleteOrganizationRequest {
+  int64 id = 1;
+}
+
+message DeleteOrganizationResponse {
+  bool success = 1;
+}
+
+message GetTeamRequest {
+  int64 id = 1;
+}
+
+message GetTeamResponse {
+  Team team = 1;
+}
+
+message ListTeamsRequest {
+  optional string after = 1;
+  optional string before = 2;
+  optional int32 first = 3;
+  optional int32 last = 4;
+  optional TeamFilter filter = 5;
+  optional TeamOrderBy order_by = 6;
+}
+
+message CreateTeamRequest {
+  string name = 1;
+  string slug = 2;
+  optional string description = 3;
+  int64 organization_id = 4;
+}
+
+message CreateTeamResponse {
+  Team team = 1;
+}
+
+message UpdateTeamRequest {
+  int64 id = 1;
+  optional string name = 2;
+  optional string slug = 3;
+  optional string description = 4;
+}
+
+message UpdateTeamResponse {
+  Team team = 1;
+}
+
+message DeleteTeamRequest {
+  int64 id = 1;
+}
+
+message DeleteTeamResponse {
+  bool success = 1;
+}
+
+// =============================================================================
+// Services
+// =============================================================================
+
+service UserService {
+  option (synapse.graphql.service) = {};
+  option (synapse.grpc.service) = {};
+  option (synapse.storage.service) = {
+    generate_storage: true
+    generate_implementation: true
+  };
+
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "user"
+      description: "Get a user by ID"
+      operation: "Query"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc ListUsers(ListUsersRequest) returns (UserConnection) {
+    option (synapse.graphql.method) = {
+      name: "users"
+      description: "List users with pagination"
+      operation: "Query"
+    };
+  }
+
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "createUser"
+      description: "Create a new user"
+      operation: "Mutation"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "updateUser"
+      description: "Update an existing user"
+      operation: "Mutation"
+      output_type: "User"
+      output_field: "user"
+    };
+  }
+
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse) {
+    option (synapse.graphql.method) = {
+      name: "deleteUser"
+      description: "Delete a user"
+      operation: "Mutation"
+    };
+  }
+}
+
+service OrganizationService {
+  option (synapse.graphql.service) = {};
+  option (synapse.grpc.service) = {};
+  option (synapse.storage.service) = {
+    generate_storage: true
+    generate_implementation: true
+  };
+
+  rpc GetOrganization(GetOrganizationRequest) returns (GetOrganizationResponse) {
+    option (synapse.graphql.method) = {
+      name: "organization"
+      description: "Get an organization by ID"
+      operation: "Query"
+      output_type: "Organization"
+      output_field: "organization"
+    };
+  }
+
+  rpc ListOrganizations(ListOrganizationsRequest) returns (OrganizationConnection) {
+    option (synapse.graphql.method) = {
+      name: "organizations"
+      description: "List organizations with pagination"
+      operation: "Query"
+    };
+  }
+
+  rpc CreateOrganization(CreateOrganizationRequest) returns (CreateOrganizationResponse) {
+    option (synapse.graphql.method) = {
+      name: "createOrganization"
+      description: "Create a new organization"
+      operation: "Mutation"
+      output_type: "Organization"
+      output_field: "organization"
+    };
+  }
+
+  rpc UpdateOrganization(UpdateOrganizationRequest) returns (UpdateOrganizationResponse) {
+    option (synapse.graphql.method) = {
+      name: "updateOrganization"
+      description: "Update an existing organization"
+      operation: "Mutation"
+      output_type: "Organization"
+      output_field: "organization"
+    };
+  }
+
+  rpc DeleteOrganization(DeleteOrganizationRequest) returns (DeleteOrganizationResponse) {
+    option (synapse.graphql.method) = {
+      name: "deleteOrganization"
+      description: "Delete an organization"
+      operation: "Mutation"
+    };
+  }
+}
+
+service TeamService {
+  option (synapse.graphql.service) = {};
+  option (synapse.grpc.service) = {};
+  option (synapse.storage.service) = {
+    generate_storage: true
+    generate_implementation: true
+  };
+
+  rpc GetTeam(GetTeamRequest) returns (GetTeamResponse) {
+    option (synapse.graphql.method) = {
+      name: "team"
+      description: "Get a team by ID"
+      operation: "Query"
+      output_type: "Team"
+      output_field: "team"
+    };
+  }
+
+  rpc ListTeams(ListTeamsRequest) returns (TeamConnection) {
+    option (synapse.graphql.method) = {
+      name: "teams"
+      description: "List teams with pagination"
+      operation: "Query"
+    };
+  }
+
+  rpc CreateTeam(CreateTeamRequest) returns (CreateTeamResponse) {
+    option (synapse.graphql.method) = {
+      name: "createTeam"
+      description: "Create a new team"
+      operation: "Mutation"
+      output_type: "Team"
+      output_field: "team"
+    };
+  }
+
+  rpc UpdateTeam(UpdateTeamRequest) returns (UpdateTeamResponse) {
+    option (synapse.graphql.method) = {
+      name: "updateTeam"
+      description: "Update an existing team"
+      operation: "Mutation"
+      output_type: "Team"
+      output_field: "team"
+    };
+  }
+
+  rpc DeleteTeam(DeleteTeamRequest) returns (DeleteTeamResponse) {
+    option (synapse.graphql.method) = {
+      name: "deleteTeam"
+      description: "Delete a team"
+      operation: "Mutation"
+    };
+  }
+}

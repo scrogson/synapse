@@ -36,8 +36,8 @@ pub fn generate_connections_for_package(
     Ok(files)
 }
 
-/// Generate PageInfo type
-fn generate_page_info(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate PageInfo type (in shared synapse/relay/graphql location)
+fn generate_page_info(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated Relay PageInfo type
         //! @generated
@@ -59,10 +59,9 @@ fn generate_page_info(file: &FileDescriptorProto) -> Result<File, GeneratorError
             pub end_cursor: Option<String>,
         }
 
-        // Convert from proto PageInfo in synapse.relay package
-        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
-        impl From<super::super::super::synapse::relay::PageInfo> for PageInfo {
-            fn from(p: super::super::super::synapse::relay::PageInfo) -> Self {
+        // Convert from proto PageInfo
+        impl From<super::super::PageInfo> for PageInfo {
+            fn from(p: super::super::PageInfo) -> Self {
                 Self {
                     has_next_page: p.has_next_page,
                     has_previous_page: p.has_previous_page,
@@ -79,8 +78,8 @@ fn generate_page_info(file: &FileDescriptorProto) -> Result<File, GeneratorError
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/page_info.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/page_info.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -155,7 +154,10 @@ fn generate_entity_connection(
         #![allow(missing_docs)]
 
         use async_graphql::SimpleObject;
-        use super::{PageInfo, #edge_ident, #entity_ident};
+        use super::#edge_ident;
+        use super::#entity_ident;
+        // Import PageInfo from shared synapse::relay::graphql
+        use super::super::super::synapse::relay::graphql::PageInfo;
 
         /// Relay Connection for entity
         #[derive(SimpleObject, Clone)]

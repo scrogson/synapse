@@ -13,15 +13,7 @@ use prost_types::field_descriptor_proto::Type;
 use prost_types::{DescriptorProto, FileDescriptorProto};
 use quote::{format_ident, quote};
 
-/// Track which primitive types we need to generate filters for
-#[derive(Default)]
-pub struct FilterContext {
-    pub needs_int_filter: bool,
-    pub needs_string_filter: bool,
-    pub needs_bool_filter: bool,
-    pub needs_float_filter: bool,
-    pub needs_timestamp_filter: bool,
-}
+// Type is used in generate_entity_filter for field type matching
 
 /// Generate all filter-related types for a package
 ///
@@ -33,31 +25,16 @@ pub fn generate_filters_for_package(
     all_files: &[FileDescriptorProto],
 ) -> Result<Vec<File>, GeneratorError> {
     let mut files = Vec::new();
-    let mut ctx = FilterContext::default();
 
-    // First pass: determine which primitive filters we need
-    for entity in entities {
-        analyze_entity_fields(entity, &mut ctx);
-    }
+    // Always generate ALL primitive filter types to synapse/relay/graphql/
+    // This ensures consistency and avoids missing type errors
+    files.push(generate_int_filter(file)?);
+    files.push(generate_string_filter(file)?);
+    files.push(generate_bool_filter(file)?);
+    files.push(generate_float_filter(file)?);
+    files.push(generate_timestamp_filter(file)?);
 
-    // Generate primitive filter types (GraphQL wrappers for proto types)
-    if ctx.needs_int_filter {
-        files.push(generate_int_filter(file)?);
-    }
-    if ctx.needs_string_filter {
-        files.push(generate_string_filter(file)?);
-    }
-    if ctx.needs_bool_filter {
-        files.push(generate_bool_filter(file)?);
-    }
-    if ctx.needs_float_filter {
-        files.push(generate_float_filter(file)?);
-    }
-    if ctx.needs_timestamp_filter {
-        files.push(generate_timestamp_filter(file)?);
-    }
-
-    // Always generate OrderDirection enum (GraphQL wrapper for proto enum)
+    // Always generate OrderDirection enum
     files.push(generate_order_direction(file)?);
 
     // Generate entity-specific filter and orderBy types (GraphQL wrappers)
@@ -70,39 +47,8 @@ pub fn generate_filters_for_package(
     Ok(files)
 }
 
-/// Analyze entity fields to determine which primitive filters are needed
-fn analyze_entity_fields(entity: &DescriptorProto, ctx: &mut FilterContext) {
-    for field in &entity.field {
-        match field.r#type() {
-            Type::Int64 | Type::Int32 | Type::Uint64 | Type::Uint32
-            | Type::Sint32 | Type::Sint64 | Type::Fixed32 | Type::Fixed64
-            | Type::Sfixed32 | Type::Sfixed64 => {
-                ctx.needs_int_filter = true;
-            }
-            Type::String => {
-                ctx.needs_string_filter = true;
-            }
-            Type::Bool => {
-                ctx.needs_bool_filter = true;
-            }
-            Type::Float | Type::Double => {
-                ctx.needs_float_filter = true;
-            }
-            Type::Message => {
-                // Check if this is a Timestamp type
-                if let Some(type_name) = &field.type_name {
-                    if type_name.contains("Timestamp") {
-                        ctx.needs_timestamp_filter = true;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Generate IntFilter type
-fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate IntFilter type (in shared synapse/relay/graphql location)
+fn generate_int_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated IntFilter type
         //! @generated
@@ -133,9 +79,8 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
             pub is_null: Option<bool>,
         }
 
-        // Convert to proto type in synapse.relay package
-        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
-        impl From<IntFilter> for super::super::super::synapse::relay::IntFilter {
+        // Convert to proto type
+        impl From<IntFilter> for super::super::IntFilter {
             fn from(f: IntFilter) -> Self {
                 Self {
                     eq: f.eq,
@@ -157,8 +102,8 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/int_filter.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/int_filter.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -167,8 +112,8 @@ fn generate_int_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErro
     })
 }
 
-/// Generate StringFilter type
-fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate StringFilter type (in shared synapse/relay/graphql location)
+fn generate_string_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated StringFilter type
         //! @generated
@@ -209,9 +154,8 @@ fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorE
             pub is_null: Option<bool>,
         }
 
-        // Convert to proto type in synapse.relay package
-        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
-        impl From<StringFilter> for super::super::super::synapse::relay::StringFilter {
+        // Convert to proto type
+        impl From<StringFilter> for super::super::StringFilter {
             fn from(f: StringFilter) -> Self {
                 Self {
                     eq: f.eq,
@@ -238,8 +182,8 @@ fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorE
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/string_filter.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/string_filter.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -248,8 +192,8 @@ fn generate_string_filter(file: &FileDescriptorProto) -> Result<File, GeneratorE
     })
 }
 
-/// Generate BoolFilter type
-fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate BoolFilter type (in shared synapse/relay/graphql location)
+fn generate_bool_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated BoolFilter type
         //! @generated
@@ -267,9 +211,8 @@ fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErr
             pub is_null: Option<bool>,
         }
 
-        // Convert to proto type in synapse.relay package
-        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
-        impl From<BoolFilter> for super::super::super::synapse::relay::BoolFilter {
+        // Convert to proto type
+        impl From<BoolFilter> for super::super::BoolFilter {
             fn from(f: BoolFilter) -> Self {
                 Self {
                     eq: f.eq,
@@ -285,8 +228,8 @@ fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErr
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/bool_filter.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/bool_filter.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -295,8 +238,8 @@ fn generate_bool_filter(file: &FileDescriptorProto) -> Result<File, GeneratorErr
     })
 }
 
-/// Generate FloatFilter type
-fn generate_float_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate FloatFilter type (in shared synapse/relay/graphql location)
+fn generate_float_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated FloatFilter type
         //! @generated
@@ -329,8 +272,8 @@ fn generate_float_filter(file: &FileDescriptorProto) -> Result<File, GeneratorEr
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/float_filter.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/float_filter.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -339,8 +282,8 @@ fn generate_float_filter(file: &FileDescriptorProto) -> Result<File, GeneratorEr
     })
 }
 
-/// Generate TimestampFilter type
-fn generate_timestamp_filter(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate TimestampFilter type (in shared synapse/relay/graphql location)
+fn generate_timestamp_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated TimestampFilter type
         //! @generated
@@ -368,9 +311,8 @@ fn generate_timestamp_filter(file: &FileDescriptorProto) -> Result<File, Generat
             pub is_null: Option<bool>,
         }
 
-        // Convert to proto type in synapse.relay package
-        // Path: graphql/ -> package/ -> generated/ -> synapse/relay/
-        impl From<TimestampFilter> for super::super::super::synapse::relay::TimestampFilter {
+        // Convert to proto type
+        impl From<TimestampFilter> for super::super::TimestampFilter {
             fn from(f: TimestampFilter) -> Self {
                 Self {
                     eq: f.eq.map(|s| prost_types::Timestamp { seconds: s, nanos: 0 }),
@@ -391,8 +333,8 @@ fn generate_timestamp_filter(file: &FileDescriptorProto) -> Result<File, Generat
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/timestamp_filter.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/timestamp_filter.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -401,8 +343,8 @@ fn generate_timestamp_filter(file: &FileDescriptorProto) -> Result<File, Generat
     })
 }
 
-/// Generate OrderDirection enum
-fn generate_order_direction(file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+/// Generate OrderDirection enum (in shared synapse/relay/graphql location)
+fn generate_order_direction(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
     let code = quote! {
         //! Auto-generated OrderDirection enum
         //! @generated
@@ -447,8 +389,8 @@ fn generate_order_direction(file: &FileDescriptorProto) -> Result<File, Generato
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/order_direction.rs", package.replace('.', "/"));
+    // Output to shared location: synapse/relay/graphql/
+    let output_path = "synapse/relay/graphql/order_direction.rs".to_string();
 
     Ok(File {
         name: Some(output_path),
@@ -594,7 +536,8 @@ fn generate_entity_filter(
         #![allow(missing_docs)]
 
         use async_graphql::InputObject;
-        use super::{IntFilter, StringFilter, BoolFilter, TimestampFilter};
+        // Import shared filter types from synapse::relay::graphql
+        use super::super::super::synapse::relay::graphql::{IntFilter, StringFilter, BoolFilter, TimestampFilter};
 
         /// Filter for entity queries
         #[derive(InputObject, Default, Clone)]
@@ -700,7 +643,8 @@ fn generate_entity_order_by(
         #![allow(missing_docs)]
 
         use async_graphql::InputObject;
-        use super::OrderDirection;
+        // Import shared OrderDirection from synapse::relay::graphql
+        use super::super::super::synapse::relay::graphql::OrderDirection;
 
         /// Order by options for entity queries
         #[derive(InputObject, Default, Clone)]

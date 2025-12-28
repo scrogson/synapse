@@ -164,20 +164,15 @@ pub fn generate(
     let mut mod_declarations = Vec::new();
     let mut pub_uses = Vec::new();
 
-    // Primitive filter modules (GraphQL wrappers - always generated)
+    // Import shared filter types from synapse::relay::graphql (not generated per-package)
+    // These types are generated once in synapse/relay/graphql/ and shared across all packages
     if info.has_auto_filters {
-        mod_declarations.push(quote! { mod int_filter; });
-        pub_uses.push(quote! { pub use int_filter::IntFilter; });
-        mod_declarations.push(quote! { mod string_filter; });
-        pub_uses.push(quote! { pub use string_filter::StringFilter; });
-        mod_declarations.push(quote! { mod bool_filter; });
-        pub_uses.push(quote! { pub use bool_filter::BoolFilter; });
-        mod_declarations.push(quote! { mod timestamp_filter; });
-        pub_uses.push(quote! { pub use timestamp_filter::TimestampFilter; });
-        mod_declarations.push(quote! { mod order_direction; });
-        pub_uses.push(quote! { pub use order_direction::OrderDirection; });
-        mod_declarations.push(quote! { mod page_info; });
-        pub_uses.push(quote! { pub use page_info::PageInfo; });
+        pub_uses.push(quote! {
+            pub use super::super::synapse::relay::graphql::{
+                IntFilter, StringFilter, BoolFilter, TimestampFilter,
+                OrderDirection, PageInfo
+            };
+        });
     }
 
     // Entity modules and their auto-generated types (GraphQL wrappers)

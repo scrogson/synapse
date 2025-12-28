@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package iam;
+
+import "google/protobuf/timestamp.proto";
+import "synapse/graphql/options.proto";
+import "synapse/storage/options.proto";
+
+// =============================================================================
+// IAM Entities
+// =============================================================================
+
+message Organization {
+  option (synapse.graphql.message) = { node: true };
+  option (synapse.storage.entity) = {
+    table_name: "organizations"
+    relations: [
+      {
+        name: "teams"
+        type: RELATION_TYPE_HAS_MANY
+        related: "Team"
+        foreign_key: "organization_id"
+      },
+      {
+        name: "members"
+        type: RELATION_TYPE_HAS_MANY
+        related: "User"
+        foreign_key: "organization_id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column).primary_key = true];
+  string name = 2;
+  string slug = 3 [(synapse.storage.column).unique = true];
+  optional string description = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+
+message Team {
+  option (synapse.graphql.message) = { node: true };
+  option (synapse.storage.entity) = {
+    table_name: "teams"
+    relations: [
+      {
+        name: "organization"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "Organization"
+        foreign_key: "organization_id"
+        references: "id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column).primary_key = true];
+  string name = 2;
+  string slug = 3;
+  optional string description = 4;
+  int64 organization_id = 5 [(synapse.graphql.field).skip = true];
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message User {
+  option (synapse.graphql.message) = { node: true };
+  option (synapse.storage.entity) = {
+    table_name: "users"
+    relations: [
+      {
+        name: "organization"
+        type: RELATION_TYPE_BELONGS_TO
+        related: "Organization"
+        foreign_key: "organization_id"
+        references: "id"
+      }
+    ]
+  };
+
+  int64 id = 1 [(synapse.storage.column).primary_key = true];
+  string email = 2 [(synapse.storage.column).unique = true];
+  string name = 3;
+  optional string avatar_url = 4;
+  optional int64 organization_id = 5 [(synapse.graphql.field).skip = true];
+  bool is_active = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
