@@ -125,6 +125,13 @@ async fn main() -> anyhow::Result<()> {
     let db = Database::connect(&database_url).await?;
     tracing::info!("Database connected!");
 
+    // Sync schema - creates tables if they don't exist
+    tracing::info!("Syncing database schema...");
+    db.get_schema_registry("synapse_unified_example::*")
+        .sync(&db)
+        .await?;
+    tracing::info!("Schema synced!");
+
     // Create storage implementations
     let user_storage = SeaOrmUserServiceStorage::new(db.clone());
     let org_storage = SeaOrmOrganizationServiceStorage::new(db.clone());

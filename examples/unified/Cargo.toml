@@ -24,8 +24,8 @@ storage = ["sea-orm", "sea-orm-migration"]
 tokio = { version = "1", features = ["full"] }
 
 # Database (optional - only for services with storage)
-sea-orm = { version = "1", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
-sea-orm-migration = { version = "1", optional = true }
+sea-orm = { version = "2.0.0-rc.2", features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "schema-sync", "entity-registry"], optional = true }
+sea-orm-migration = { version = "2.0.0-rc.2", optional = true }
 
 # gRPC
 tonic = "0.12"

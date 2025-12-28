@@ -107,10 +107,33 @@ fn generate_relation_field_with_reverse(
     // Check if this is a self-referential relation
     let is_self_ref = rel_def.related.to_snake_case() == current_entity.to_snake_case();
 
-    // For self-ref, use Entity directly; otherwise use super::module::Entity
+    // Check if this is a cross-package relation (contains a dot like "iam.User")
+    let is_cross_package = rel_def.related.contains('.');
+
+    // Generate the target entity path
     let target_entity: syn::Type = if is_self_ref {
         syn::parse_quote!(Entity)
+    } else if is_cross_package {
+        // Cross-package relation: "iam.User" -> "crate::iam::entities::user::Entity"
+        let parts: Vec<&str> = rel_def.related.split('.').collect();
+        if parts.len() == 2 {
+            let package = parts[0].to_snake_case();
+            let entity = parts[1].to_snake_case();
+            syn::parse_str(&format!(
+                "crate::{}::entities::{}::Entity",
+                package, entity
+            ))
+            .unwrap_or_else(|_| syn::parse_quote!(Entity))
+        } else {
+            // Fallback for unexpected format
+            syn::parse_str(&format!(
+                "super::{}::Entity",
+                rel_def.related.to_snake_case().replace('.', "_")
+            ))
+            .unwrap_or_else(|_| syn::parse_quote!(Entity))
+        }
     } else {
+        // Same package relation
         syn::parse_str(&format!(
             "super::{}::Entity",
             rel_def.related.to_snake_case()
