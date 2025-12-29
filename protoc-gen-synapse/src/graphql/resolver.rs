@@ -339,7 +339,7 @@ fn generate_query_resolver_methods(
                         order_by: order_by.map(|o| o.into()),
                     };
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().into())
                 }
             }
@@ -359,7 +359,7 @@ fn generate_query_resolver_methods(
                             if e.code() == tonic::Code::NotFound {
                                 Ok(None)
                             } else {
-                                Err(async_graphql::Error::new(e.message()))
+                                Err(async_graphql::Error::new(e.to_string()))
                             }
                         }
                     }
@@ -452,7 +452,7 @@ fn generate_mutation_resolver_methods(
                     let client = ctx.data_unchecked::<Client>();
                     let request = super::super::#request_type { id };
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().success)
                 }
             }
@@ -491,7 +491,7 @@ fn generate_mutation_resolver_methods(
                     #(#ctx_extractions)*
                     let request = input.to_request(#(#ctx_args),*);
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
                 }
@@ -507,7 +507,7 @@ fn generate_mutation_resolver_methods(
                     let client = ctx.data_unchecked::<Client>();
                     let request: super::super::#request_type = input.into();
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Failed to create"))?)
                 }
@@ -524,7 +524,7 @@ fn generate_mutation_resolver_methods(
                     let client = ctx.data_unchecked::<Client>();
                     let request = input.to_request(id);
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Failed to update"))?)
                 }
@@ -539,7 +539,7 @@ fn generate_mutation_resolver_methods(
                 ) -> Result<super::#output_type> {
                     let client = ctx.data_unchecked::<Client>();
                     let response = client.clone().#grpc_method(request).await
-                        .map_err(|e| async_graphql::Error::new(e.message()))?;
+                        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
                     Ok(response.into_inner().#output_field.map(super::#output_type::from)
                         .ok_or_else(|| async_graphql::Error::new("Operation failed"))?)
                 }
