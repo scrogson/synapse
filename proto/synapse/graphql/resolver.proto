@@ -1,0 +1,146 @@
+// Synapse GraphQL Custom Resolver Options
+//
+// Define custom resolvers for GraphQL fields using Deno (TypeScript/JavaScript).
+// Resolvers can be defined at three levels:
+//
+// 1. Message-level: Virtual/computed fields (GraphQL-only, not in proto schema)
+// 2. Field-level: Override resolution of existing proto fields
+// 3. Method-level: Custom implementation for RPC operations
+//
+// Generated TypeScript contracts provide type-safe resolver interfaces.
+
+syntax = "proto3";
+
+package synapse.graphql;
+
+import "google/protobuf/descriptor.proto";
+
+// =============================================================================
+// Deno Runtime Configuration
+// =============================================================================
+
+// Configuration for Deno-based resolver execution
+message DenoConfig {
+  // Path to TypeScript/JavaScript module (relative to project root)
+  // Example: "resolvers/user.ts"
+  string module = 1;
+
+  // Function name to call (defaults to field/method name in camelCase)
+  // Example: "computeFullName" or "maskEmail"
+  optional string function = 2;
+
+  // Execution timeout in milliseconds (default: 5000)
+  optional uint32 timeout_ms = 3;
+
+  // Deno permissions (restrictive by default for security)
+  DenoPermissions permissions = 4;
+}
+
+// Deno runtime permissions (deny-by-default for security)
+message DenoPermissions {
+  // Allow network access (optionally restricted to specific hosts)
+  // Empty = no network access, ["*"] = all hosts
+  repeated string net = 1;
+
+  // Allow reading files (optionally restricted to specific paths)
+  repeated string read = 2;
+
+  // Allow environment variable access (optionally restricted to specific vars)
+  repeated string env = 3;
+}
+
+// =============================================================================
+// Virtual Field Definition
+// =============================================================================
+
+// Defines a computed/virtual field that exists only in GraphQL
+// These fields are not stored in the database or sent over gRPC
+message VirtualField {
+  // GraphQL field name (required)
+  string name = 1;
+
+  // GraphQL type (required) - e.g., "String!", "Int", "[Post!]!"
+  string type = 2;
+
+  // Field description (appears in GraphQL schema)
+  optional string description = 3;
+
+  // Field arguments (for parameterized computed fields)
+  repeated FieldArgument arguments = 4;
+
+  // Deno resolver configuration
+  DenoConfig deno = 10;
+}
+
+// Argument for a virtual field
+message FieldArgument {
+  // Argument name
+  string name = 1;
+
+  // GraphQL type - e.g., "Int!", "String", "[ID!]!"
+  string type = 2;
+
+  // Default value as JSON (e.g., "10", "\"default\"", "null")
+  optional string default_value = 3;
+
+  // Argument description
+  optional string description = 4;
+}
+
+// =============================================================================
+// Message-level Resolver Options
+// =============================================================================
+
+// Resolver options for messages - defines virtual/computed fields
+message MessageResolverOptions {
+  // Virtual fields that exist only in GraphQL (computed at runtime)
+  // These are not proto fields - they're defined entirely in options
+  repeated VirtualField fields = 1;
+
+  // Deno module for all virtual fields on this message
+  // Individual fields can override with their own deno config
+  DenoConfig deno = 2;
+}
+
+// =============================================================================
+// Field-level Resolver Options
+// =============================================================================
+
+// Resolver options for existing proto fields
+// Use this to override how a field value is resolved in GraphQL
+message FieldResolverOptions {
+  // Deno resolver configuration
+  // The resolver receives the parent object and returns the transformed value
+  DenoConfig deno = 1;
+}
+
+// =============================================================================
+// Method-level Resolver Options
+// =============================================================================
+
+// Resolver options for RPC methods
+// Use this for custom Query/Mutation implementations instead of generated gRPC calls
+message MethodResolverOptions {
+  // Deno resolver configuration
+  // The resolver receives args and context, returns the response type
+  DenoConfig deno = 1;
+}
+
+// =============================================================================
+// Extensions
+// =============================================================================
+
+extend google.protobuf.MessageOptions {
+  // Custom resolver options for messages (virtual fields)
+  MessageResolverOptions resolver = 53010;
+}
+
+extend google.protobuf.FieldOptions {
+  // Custom resolver for an existing proto field
+  FieldResolverOptions field_resolver = 53011;
+}
+
+extend google.protobuf.MethodOptions {
+  // Custom resolver for an RPC method
+  MethodResolverOptions method_resolver = 53012;
+}
