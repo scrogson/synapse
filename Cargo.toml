@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "protoc-gen-synapse",
     "synapse-proto-gen",
+    "synapse-deno",
 ]
 exclude = [
     "examples/full-stack",

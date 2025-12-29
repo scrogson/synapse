@@ -1,0 +1,24 @@
+[package]
+name = "synapse-deno"
+version = "0.1.0"
+edition = "2024"
+description = "Deno runtime integration for Synapse custom resolvers"
+license = "MIT"
+
+[dependencies]
+# Deno runtime
+deno_core = "0.376"
+serde_v8 = "0.285"
+
+# Async
+tokio = { version = "1", features = ["rt", "sync"] }
+
+# Serialization (for marshaling data between Rust and JS)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
