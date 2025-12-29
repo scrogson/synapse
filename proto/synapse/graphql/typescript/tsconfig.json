@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "paths": {
+      "@synapse/runtime": ["./runtime.d.ts"],
+      "./generated": ["./generated.example.d.ts"]
+    }
+  },
+  "include": ["*.ts", "*.d.ts"]
+}
