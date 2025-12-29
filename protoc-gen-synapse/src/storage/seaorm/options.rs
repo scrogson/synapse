@@ -49,6 +49,11 @@ const GRAPHQL_QUERY_EXTENSION_NAME: &str = "synapse.graphql.query";
 const GRAPHQL_MUTATION_EXTENSION_NAME: &str = "synapse.graphql.mutation";
 const GRAPHQL_SUBSCRIPTION_EXTENSION_NAME: &str = "synapse.graphql.subscription";
 
+// GraphQL resolver extension names
+const GRAPHQL_RESOLVER_EXTENSION_NAME: &str = "synapse.graphql.resolver";
+const GRAPHQL_FIELD_RESOLVER_EXTENSION_NAME: &str = "synapse.graphql.field_resolver";
+const GRAPHQL_METHOD_RESOLVER_EXTENSION_NAME: &str = "synapse.graphql.method_resolver";
+
 /// Lazily initialized descriptor pool with our extension definitions
 static DESCRIPTOR_POOL: Lazy<DescriptorPool> = Lazy::new(|| {
     DescriptorPool::decode(FILE_DESCRIPTOR_SET_BYTES).expect("Failed to decode file descriptor set")
@@ -95,6 +100,12 @@ struct OptionsCache {
     graphql_mutation_options: HashMap<(String, String, String), graphql::MutationOptions>,
     /// GraphQL subscription options: (file_name, service_name, method_name) -> graphql::SubscriptionOptions
     graphql_subscription_options: HashMap<(String, String, String), graphql::SubscriptionOptions>,
+    /// GraphQL message resolver options: (file_name, message_name) -> graphql::MessageResolverOptions
+    graphql_resolver_options: HashMap<(String, String), graphql::MessageResolverOptions>,
+    /// GraphQL field resolver options: (file_name, message_name, field_number) -> graphql::FieldResolverOptions
+    graphql_field_resolver_options: HashMap<(String, String, i32), graphql::FieldResolverOptions>,
+    /// GraphQL method resolver options: (file_name, service_name, method_name) -> graphql::MethodResolverOptions
+    graphql_method_resolver_options: HashMap<(String, String, String), graphql::MethodResolverOptions>,
 }
 
 /// Pre-process raw CodeGeneratorRequest bytes to extract options using prost-reflect
@@ -251,6 +262,21 @@ fn extract_message_options(
                     }
                 }
             }
+
+            // Extract GraphQL resolver options (synapse.graphql.resolver)
+            if let Some(ext_field) =
+                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_RESOLVER_EXTENSION_NAME)
+            {
+                if opts_msg.has_extension(&ext_field) {
+                    let ext_value = opts_msg.get_extension(&ext_field);
+                    if let Some(resolver_opts) = convert_to_message_resolver_options(&ext_value) {
+                        cache.graphql_resolver_options.insert(
+                            (file_name.to_string(), full_name.clone()),
+                            resolver_opts,
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -328,6 +354,27 @@ fn extract_message_options(
                                                 field_number,
                                             ),
                                             field_opts,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Extract synapse.graphql.field_resolver options
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_FIELD_RESOLVER_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(resolver_opts) =
+                                        convert_to_field_resolver_options(&ext_value)
+                                    {
+                                        cache.graphql_field_resolver_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                full_name.clone(),
+                                                field_number,
+                                            ),
+                                            resolver_opts,
                                         );
                                     }
                                 }
@@ -627,6 +674,27 @@ fn extract_service_options(
                                     }
                                 }
                             }
+
+                            // Extract GraphQL method resolver options (synapse.graphql.method_resolver)
+                            if let Some(ext_field) =
+                                DESCRIPTOR_POOL.get_extension_by_name(GRAPHQL_METHOD_RESOLVER_EXTENSION_NAME)
+                            {
+                                if opts_msg.has_extension(&ext_field) {
+                                    let ext_value = opts_msg.get_extension(&ext_field);
+                                    if let Some(method_resolver_opts) =
+                                        convert_to_method_resolver_options(&ext_value)
+                                    {
+                                        cache.graphql_method_resolver_options.insert(
+                                            (
+                                                file_name.to_string(),
+                                                service_name.clone(),
+                                                method_name.clone(),
+                                            ),
+                                            method_resolver_opts,
+                                        );
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -896,6 +964,54 @@ pub fn get_cached_graphql_subscription_options(
     OPTIONS_CACHE.read().ok().and_then(|cache| {
         cache
             .graphql_subscription_options
+            .get(&(
+                file_name.to_string(),
+                service_name.to_string(),
+                method_name.to_string(),
+            ))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL message resolver options for a given file and message name
+#[allow(dead_code)]
+pub fn get_cached_graphql_resolver_options(
+    file_name: &str,
+    msg_name: &str,
+) -> Option<graphql::MessageResolverOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_resolver_options
+            .get(&(file_name.to_string(), msg_name.to_string()))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL field resolver options for a given file, message, and field
+#[allow(dead_code)]
+pub fn get_cached_graphql_field_resolver_options(
+    file_name: &str,
+    msg_name: &str,
+    field_number: i32,
+) -> Option<graphql::FieldResolverOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_field_resolver_options
+            .get(&(file_name.to_string(), msg_name.to_string(), field_number))
+            .cloned()
+    })
+}
+
+/// Look up cached GraphQL method resolver options for a given file, service, and method
+#[allow(dead_code)]
+pub fn get_cached_graphql_method_resolver_options(
+    file_name: &str,
+    service_name: &str,
+    method_name: &str,
+) -> Option<graphql::MethodResolverOptions> {
+    OPTIONS_CACHE.read().ok().and_then(|cache| {
+        cache
+            .graphql_method_resolver_options
             .get(&(
                 file_name.to_string(),
                 service_name.to_string(),
@@ -1450,6 +1566,180 @@ fn convert_to_graphql_subscription_options(value: &Value) -> Option<graphql::Sub
         if let Value::String(s) = cow.as_ref() {
             result.output_type = s.clone();
         }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::DenoConfig
+fn convert_to_deno_config(value: &Value) -> Option<graphql::DenoConfig> {
+    let msg = value.as_message()?;
+    let mut result = graphql::DenoConfig::default();
+
+    if let Some(cow) = msg.get_field_by_name("module") {
+        if let Value::String(s) = cow.as_ref() {
+            result.module = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("function") {
+        if let Value::String(s) = cow.as_ref() {
+            result.function = Some(s.clone());
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("timeout_ms") {
+        if let Value::U32(n) = cow.as_ref() {
+            result.timeout_ms = Some(*n);
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("permissions") {
+        if let Some(perm_msg) = cow.as_ref().as_message() {
+            let mut perms = graphql::DenoPermissions::default();
+
+            if let Some(net_cow) = perm_msg.get_field_by_name("net") {
+                if let Value::List(items) = net_cow.as_ref() {
+                    perms.net = items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                }
+            }
+
+            if let Some(read_cow) = perm_msg.get_field_by_name("read") {
+                if let Value::List(items) = read_cow.as_ref() {
+                    perms.read = items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                }
+            }
+
+            if let Some(env_cow) = perm_msg.get_field_by_name("env") {
+                if let Value::List(items) = env_cow.as_ref() {
+                    perms.env = items
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                }
+            }
+
+            result.permissions = Some(perms);
+        }
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::VirtualField
+fn convert_to_virtual_field(value: &Value) -> Option<graphql::VirtualField> {
+    let msg = value.as_message()?;
+    let mut result = graphql::VirtualField::default();
+
+    if let Some(cow) = msg.get_field_by_name("name") {
+        if let Value::String(s) = cow.as_ref() {
+            result.name = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("type") {
+        if let Value::String(s) = cow.as_ref() {
+            result.r#type = s.clone();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("description") {
+        if let Value::String(s) = cow.as_ref() {
+            result.description = Some(s.clone());
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("arguments") {
+        if let Value::List(items) = cow.as_ref() {
+            result.arguments = items
+                .iter()
+                .filter_map(|v| {
+                    let arg_msg = v.as_message()?;
+                    let mut arg = graphql::FieldArgument::default();
+
+                    if let Some(name_cow) = arg_msg.get_field_by_name("name") {
+                        if let Value::String(s) = name_cow.as_ref() {
+                            arg.name = s.clone();
+                        }
+                    }
+
+                    if let Some(type_cow) = arg_msg.get_field_by_name("type") {
+                        if let Value::String(s) = type_cow.as_ref() {
+                            arg.r#type = s.clone();
+                        }
+                    }
+
+                    if let Some(default_cow) = arg_msg.get_field_by_name("default_value") {
+                        if let Value::String(s) = default_cow.as_ref() {
+                            arg.default_value = Some(s.clone());
+                        }
+                    }
+
+                    if let Some(desc_cow) = arg_msg.get_field_by_name("description") {
+                        if let Value::String(s) = desc_cow.as_ref() {
+                            arg.description = Some(s.clone());
+                        }
+                    }
+
+                    Some(arg)
+                })
+                .collect();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("deno") {
+        result.deno = convert_to_deno_config(cow.as_ref());
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::MessageResolverOptions
+fn convert_to_message_resolver_options(value: &Value) -> Option<graphql::MessageResolverOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::MessageResolverOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("fields") {
+        if let Value::List(items) = cow.as_ref() {
+            result.fields = items
+                .iter()
+                .filter_map(|v| convert_to_virtual_field(v))
+                .collect();
+        }
+    }
+
+    if let Some(cow) = msg.get_field_by_name("deno") {
+        result.deno = convert_to_deno_config(cow.as_ref());
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::FieldResolverOptions
+fn convert_to_field_resolver_options(value: &Value) -> Option<graphql::FieldResolverOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::FieldResolverOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("deno") {
+        result.deno = convert_to_deno_config(cow.as_ref());
+    }
+
+    Some(result)
+}
+
+/// Convert a prost-reflect Value to graphql::MethodResolverOptions
+fn convert_to_method_resolver_options(value: &Value) -> Option<graphql::MethodResolverOptions> {
+    let msg = value.as_message()?;
+    let mut result = graphql::MethodResolverOptions::default();
+
+    if let Some(cow) = msg.get_field_by_name("deno") {
+        result.deno = convert_to_deno_config(cow.as_ref());
     }
 
     Some(result)

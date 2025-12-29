@@ -4,6 +4,7 @@ package iam;
 
 import "google/protobuf/timestamp.proto";
 import "synapse/graphql/options.proto";
+import "synapse/graphql/resolver.proto";
 import "synapse/storage/options.proto";
 
 // =============================================================================
@@ -73,6 +74,18 @@ message User {
         related: "Organization"
         foreign_key: "organization_id"
         references: "id"
+      }
+    ]
+  };
+
+  // Virtual/computed fields resolved via Deno
+  option (synapse.graphql.resolver) = {
+    deno: { module: "resolvers/user.ts" }
+    fields: [
+      {
+        name: "displayName"
+        type: "String!"
+        description: "User's display name (name or email)"
       }
     ]
   };
