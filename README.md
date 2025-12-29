@@ -170,6 +170,60 @@ Entities marked with `node: true` implement the Relay Node interface:
 }
 ```
 
+### Validated Domain Types
+
+Request messages with validation annotations generate domain types with `TryFrom` validation:
+
+```protobuf
+message CreateUserRequest {
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateUser"
+  };
+
+  string email = 1 [(synapse.validate.field).rules = {
+    required: true
+    email: true
+  }];
+
+  string name = 2 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
+  }];
+}
+```
+
+Generated code validates on conversion:
+
+```rust
+// Proto type -> Validated domain type
+let create_user: CreateUser = request.try_into()?;
+
+// Validation errors have structured fields
+// CreateUserValidationError { errors: [CreateUserFieldError { code, message, field }] }
+```
+
+### Partial Override Pattern
+
+Storage traits support partial overrides—override specific methods while using generated defaults for others:
+
+```rust
+impl UserServiceStorage for MyCustomStorage {
+    fn db(&self) -> &DatabaseConnection { &self.db }
+
+    // Override just create_user with custom business logic
+    async fn create_user(&self, request: CreateUser) -> Result<CreateUserResponse, StorageError> {
+        // Custom pre-processing
+        log::info!("Creating user: {}", request.email);
+
+        // Delegate to generated default
+        user_service_storage_defaults::create_user(self.db(), request).await
+    }
+
+    // All other methods use trait defaults automatically
+}
+```
+
 ## Quick Start
 
 ### 1. Define Your Schema
@@ -407,43 +461,81 @@ option (synapse.storage.service) = {
 };
 ```
 
+### `synapse.validate.message`
+
+```protobuf
+option (synapse.validate.message) = {
+  generate_conversion: true       // Generate TryFrom<Proto> for domain type
+  name: "CreateUser"              // Name of the generated domain type
+};
+```
+
+### `synapse.validate.field`
+
+```protobuf
+string email = 1 [(synapse.validate.field).rules = {
+  required: true                  // Field must be non-empty (strings) or Some (optionals)
+  email: true                     // Must contain @ (basic email check)
+  length: { min: 1, max: 100 }    // String length constraints
+  pattern: "^[a-z0-9-]+$"         // Regex pattern match
+}];
+```
+
 ## Project Structure
 
 ```
 your-project/
 ├── proto/
-│   ├── blog.entities.proto      # Entity definitions
-│   ├── blog.proto               # Services and request/response types
-│   └── blog.synapse.proto       # Auto-generated (filters, connections)
+│   ├── iam/
+│   │   ├── entities.proto       # IAM entity definitions (User, Org, Team)
+│   │   └── services.proto       # IAM services and request/response types
+│   └── blog/
+│       ├── entities.proto       # Blog entity definitions (Author, Post)
+│       └── services.proto       # Blog services and request/response types
 ├── src/
 │   ├── generated/               # Generated Rust code
+│   │   ├── iam/
+│   │   │   ├── mod.rs           # Proto types + re-exports
+│   │   │   ├── entities/        # SeaORM entity models
+│   │   │   ├── storage/         # Storage traits, defaults, SeaORM impl
+│   │   │   ├── grpc/            # gRPC service implementations
+│   │   │   ├── graphql/         # GraphQL types, resolvers, DataLoaders
+│   │   │   ├── create_user.rs   # Validated domain type
+│   │   │   └── update_user.rs   # Validated domain type
 │   │   └── blog/
-│   │       ├── mod.rs           # Proto types + gRPC (tonic)
-│   │       ├── entities/        # SeaORM entity models
-│   │       ├── storage/         # Storage traits + SeaORM implementations
-│   │       ├── grpc/            # gRPC service implementations
-│   │       └── graphql/         # GraphQL types, resolvers, DataLoaders
+│   │       └── ...              # Same structure
 │   └── main.rs
 ├── build.rs
 └── Cargo.toml
 ```
 
-## Examples
+## Example
 
-See the [`examples/full-stack`](examples/full-stack) directory for a complete working example with:
+See the [`examples/unified`](examples/unified) directory for a complete working example with:
 
-- PostgreSQL database
-- gRPC API (Tonic)
+- **Multi-service architecture**: IAM (Users, Organizations, Teams) + Blog (Authors, Posts)
+- **Cross-service relations**: Blog Author belongs_to IAM User
+- **Validated domain types**: Request validation with `TryFrom` conversions
+- **Partial override pattern**: Override specific storage methods while using defaults for others
+- **Multiple deployment modes**: Monolith, microservices, or gateway-only
+- PostgreSQL database with SeaORM 2.0
+- gRPC APIs (Tonic)
 - GraphQL API (async-graphql + Axum)
-- Apollo Sandbox UI
+- Relay-style pagination and filtering
 
 ```bash
-cd examples/full-stack
-docker-compose up -d   # Start PostgreSQL
-cargo run              # Start servers
+# Start PostgreSQL
+just db-up
 
-# GraphQL: http://localhost:8080
-# gRPC: localhost:50060
+# Run as monolith (all services in one process)
+just example-run
+
+# Or run as microservices
+just demo  # Starts IAM, Blog, and Gateway separately
+
+# GraphQL: http://localhost:4000
+# IAM gRPC: localhost:50051
+# Blog gRPC: localhost:50052
 ```
 
 ## Design Principles
@@ -465,6 +557,9 @@ cargo run              # Start servers
 | Relay connections | ✅ Complete |
 | DataLoaders | ✅ Complete |
 | Filters & ordering | ✅ Complete |
+| Validated domain types | ✅ Complete |
+| Partial override pattern | ✅ Complete |
+| Cross-package relations | ✅ Complete |
 | Ecto backend | 🔮 Planned |
 | GORM backend | 🔮 Planned |
 
