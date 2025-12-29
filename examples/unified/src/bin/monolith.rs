@@ -4,17 +4,24 @@
 //! - Blog gRPC service
 //! - GraphQL gateway
 //!
+//! Uses Unix domain sockets for internal gRPC communication.
+//!
 //! Run with: cargo run --bin monolith
 
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::path::PathBuf;
 
 use async_graphql::{EmptySubscription, MergedObject, Schema};
 use async_graphql::dataloader::DataLoader;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::{extract::State, routing::get, Router};
+use http::Uri;
+use hyper_util::rt::TokioIo;
 use sea_orm::Database;
-use tonic::transport::{Channel, Server as TonicServer};
+use tokio::net::{UnixListener, UnixStream};
+use tokio_stream::wrappers::UnixListenerStream;
+use tonic::transport::{Channel, Endpoint, Server as TonicServer};
+use tower::service_fn;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use synapse_unified_example::{
@@ -118,6 +125,21 @@ async fn apollo_sandbox() -> impl axum::response::IntoResponse {
 </html>"#)
 }
 
+/// Create a gRPC channel that connects via Unix domain socket
+async fn unix_channel(socket_path: PathBuf) -> anyhow::Result<Channel> {
+    // Endpoint URI doesn't matter for UDS, but tonic requires a valid URI
+    let channel = Endpoint::try_from("http://[::]:50051")?
+        .connect_with_connector(service_fn(move |_: Uri| {
+            let path = socket_path.clone();
+            async move {
+                let stream = UnixStream::connect(path).await?;
+                Ok::<_, std::io::Error>(TokioIo::new(stream))
+            }
+        }))
+        .await?;
+    Ok(channel)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -158,26 +180,33 @@ async fn main() -> anyhow::Result<()> {
     let author_grpc = AuthorServiceGrpcService::new(author_storage);
     let post_grpc = PostServiceGrpcService::new(post_storage);
 
-    // gRPC server address
-    let grpc_addr: SocketAddr = std::env::var("GRPC_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:50051".into())
-        .parse()?;
+    // Unix socket path for internal gRPC
+    let socket_path = std::env::var("GRPC_SOCKET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("synapse-grpc.sock"));
+
+    // Remove old socket file if it exists
+    let _ = std::fs::remove_file(&socket_path);
 
     // GraphQL server address
     let graphql_addr: SocketAddr = std::env::var("GRAPHQL_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:4000".into())
         .parse()?;
 
-    tracing::info!("Starting gRPC server on {}", grpc_addr);
+    tracing::info!("Starting gRPC server on unix://{}", socket_path.display());
 
-    // Start gRPC server
+    // Create Unix socket listener
+    let uds = UnixListener::bind(&socket_path)?;
+    let uds_stream = UnixListenerStream::new(uds);
+
+    // Start gRPC server on Unix socket
     let grpc_server = TonicServer::builder()
         .add_service(UserServiceServer::new(user_grpc))
         .add_service(OrganizationServiceServer::new(org_grpc))
         .add_service(TeamServiceServer::new(team_grpc))
         .add_service(AuthorServiceServer::new(author_grpc))
         .add_service(PostServiceServer::new(post_grpc))
-        .serve(grpc_addr);
+        .serve_with_incoming(uds_stream);
 
     tokio::spawn(async move {
         if let Err(e) = grpc_server.await {
@@ -185,15 +214,12 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Small delay to ensure server is ready
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    // Create gRPC clients for GraphQL
-    let grpc_endpoint = format!("http://127.0.0.1:{}", grpc_addr.port());
-    tracing::info!("Connecting GraphQL to gRPC at {}", grpc_endpoint);
-
-    let channel = Channel::from_shared(grpc_endpoint)?
-        .connect()
-        .await?;
+    // Create gRPC channel via Unix socket
+    tracing::info!("Connecting GraphQL to gRPC via unix://{}", socket_path.display());
+    let channel = unix_channel(socket_path).await?;
 
     let user_client = UserServiceClient::new(channel.clone());
     let org_client = OrganizationServiceClient::new(channel.clone());
@@ -220,7 +246,7 @@ async fn main() -> anyhow::Result<()> {
         .data(DataLoader::new(PostsByAuthorLoader::new(post_client), tokio::spawn))
         .finish();
 
-    tracing::info!("GraphQL server listening on {}", graphql_addr);
+    tracing::info!("GraphQL server listening on http://{}", graphql_addr);
     tracing::info!("Apollo Sandbox available at http://{}/", graphql_addr);
 
     let app = Router::new()

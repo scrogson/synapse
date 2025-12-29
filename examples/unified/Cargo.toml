@@ -31,6 +31,9 @@ sea-orm-migration = { version = "2.0.0-rc.2", optional = true }
 tonic = "0.12"
 prost = "0.13"
 prost-types = "0.13"
+tokio-stream = { version = "0.1", features = ["net"] }
+hyper-util = { version = "0.1", features = ["client-legacy"] }
+http = "1"
 
 # GraphQL
 async-graphql = { version = "7", features = ["dataloader"] }
