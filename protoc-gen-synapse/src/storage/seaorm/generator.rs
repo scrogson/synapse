@@ -160,6 +160,11 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         if let Some(generated) = typescript::generate_resolvers(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
+
+        // Generate TypeScript DataLoader interfaces
+        if let Some(generated) = typescript::generate_dataloaders(file_descriptor, &request.proto_file)? {
+            files.push(generated);
+        }
     }
 
     Ok(CodeGeneratorResponse {
