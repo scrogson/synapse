@@ -2,7 +2,11 @@
 
 use crate::error::DenoError;
 use crate::resolver::DenoConfig;
-use deno_core::{extension, op2, JsRuntime, ModuleSpecifier, PollEventLoopOptions, RuntimeOptions};
+use deno_core::{
+    extension, op2, JsRuntime, ModuleLoadResponse, ModuleLoader, ModuleSource, ModuleSourceCode,
+    ModuleSpecifier, ModuleType, PollEventLoopOptions, ResolutionKind, RuntimeOptions,
+};
+use deno_error::JsErrorBox;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,6 +17,85 @@ type SharedResult = Arc<Mutex<Option<Value>>>;
 
 thread_local! {
     static RESULT_STORAGE: SharedResult = Arc::new(Mutex::new(None));
+}
+
+/// Simple file-based module loader
+struct FileModuleLoader;
+
+impl ModuleLoader for FileModuleLoader {
+    fn resolve(
+        &self,
+        specifier: &str,
+        referrer: &str,
+        _kind: ResolutionKind,
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        // Handle file:// URLs
+        if specifier.starts_with("file://") {
+            return ModuleSpecifier::parse(specifier)
+                .map_err(|e| JsErrorBox::generic(e.to_string()));
+        }
+
+        // Handle relative imports
+        if specifier.starts_with("./") || specifier.starts_with("../") {
+            let referrer_url = ModuleSpecifier::parse(referrer)
+                .map_err(|e| JsErrorBox::generic(e.to_string()))?;
+            return referrer_url
+                .join(specifier)
+                .map_err(|e| JsErrorBox::generic(e.to_string()));
+        }
+
+        // Try to parse as absolute URL
+        if let Ok(url) = ModuleSpecifier::parse(specifier) {
+            return Ok(url);
+        }
+
+        Err(JsErrorBox::generic(format!(
+            "Cannot resolve module: {}",
+            specifier
+        )))
+    }
+
+    fn load(
+        &self,
+        module_specifier: &ModuleSpecifier,
+        _maybe_referrer: Option<&deno_core::ModuleLoadReferrer>,
+        _options: deno_core::ModuleLoadOptions,
+    ) -> ModuleLoadResponse {
+        let specifier = module_specifier.clone();
+
+        ModuleLoadResponse::Sync(load_module_sync(&specifier))
+    }
+}
+
+/// Load a module synchronously from the filesystem
+fn load_module_sync(specifier: &ModuleSpecifier) -> Result<ModuleSource, JsErrorBox> {
+    if specifier.scheme() != "file" {
+        return Err(JsErrorBox::generic(format!(
+            "Only file:// URLs are supported, got: {}",
+            specifier
+        )));
+    }
+
+    let path = specifier
+        .to_file_path()
+        .map_err(|_| JsErrorBox::generic("Invalid file path"))?;
+
+    let code =
+        std::fs::read_to_string(&path).map_err(|e| JsErrorBox::generic(e.to_string()))?;
+
+    // Determine module type based on extension
+    let module_type = if path.extension().map_or(false, |ext| ext == "json") {
+        ModuleType::Json
+    } else {
+        ModuleType::JavaScript
+    };
+
+    Ok(ModuleSource::new(
+        module_type,
+        ModuleSourceCode::String(code.into()),
+        specifier,
+        None,
+    ))
 }
 
 /// Internal Deno runtime wrapper
@@ -52,6 +135,7 @@ impl DenoRuntime {
     pub fn new(_config: &DenoConfig) -> Result<Self, DenoError> {
         let runtime = JsRuntime::new(RuntimeOptions {
             extensions: vec![synapse_resolver::init()],
+            module_loader: Some(std::rc::Rc::new(FileModuleLoader)),
             ..Default::default()
         });
 
@@ -116,12 +200,9 @@ impl DenoRuntime {
         args: Value,
         _timeout_ms: u32,
     ) -> Result<Value, DenoError> {
-        // Ensure module is loaded
-        self.load_module(module_path).await?;
-
         let path_str = module_path.to_string_lossy().to_string();
 
-        // Build the call script (execute_script will wrap this in async/await)
+        // Build the call script - use dynamic import
         let script = format!(
             r#"
             (async () => {{
@@ -133,7 +214,7 @@ impl DenoRuntime {
                 const parent = {};
                 const args = {};
                 const ctx = globalThis.__synapse_context || {{}};
-                return fn(parent, args, ctx);
+                return await fn(parent, args, ctx);
             }})()
             "#,
             path_str,
@@ -154,8 +235,6 @@ impl DenoRuntime {
         args: Value,
         _timeout_ms: u32,
     ) -> Result<Value, DenoError> {
-        self.load_module(module_path).await?;
-
         let path_str = module_path.to_string_lossy().to_string();
 
         let script = format!(
@@ -194,14 +273,18 @@ impl DenoRuntime {
         let wrapped_script = format!(
             r#"
             (async () => {{
-                const result = await ({});
-                Deno.core.ops.op_return_result(result);
+                try {{
+                    const result = await ({});
+                    Deno.core.ops.op_return_result(result);
+                }} catch (e) {{
+                    Deno.core.ops.op_return_result({{ __error: e.message || String(e) }});
+                }}
             }})()
             "#,
             script
         );
 
-        // Execute the script
+        // Execute the script - this starts the async operation
         let promise = self
             .runtime
             .execute_script("<resolver>", wrapped_script)
@@ -211,24 +294,40 @@ impl DenoRuntime {
                 reason: e.to_string(),
             })?;
 
-        // Run event loop to complete the promise
-        self.runtime
-            .run_event_loop(PollEventLoopOptions::default())
-            .await
-            .map_err(|e| DenoError::ExecutionError {
-                module: module.to_string(),
-                function: function.to_string(),
-                reason: e.to_string(),
-            })?;
+        // We need to drive the event loop AND resolve the promise concurrently
+        // The resolve() call will complete when the promise settles
+        let resolve_future = self.runtime.resolve(promise);
 
-        // Resolve the promise
-        let _ = self.runtime.resolve(promise).await;
+        // Run the event loop until the promise resolves
+        tokio::select! {
+            result = resolve_future => {
+                result.map_err(|e| DenoError::ExecutionError {
+                    module: module.to_string(),
+                    function: function.to_string(),
+                    reason: e.to_string(),
+                })?;
+            }
+            result = self.runtime.run_event_loop(PollEventLoopOptions::default()) => {
+                result.map_err(|e| DenoError::ExecutionError {
+                    module: module.to_string(),
+                    function: function.to_string(),
+                    reason: e.to_string(),
+                })?;
+            }
+        }
 
         // Get the result from thread-local storage
-        take_result().ok_or_else(|| DenoError::ExecutionError {
+        let result = take_result().ok_or_else(|| DenoError::ExecutionError {
             module: module.to_string(),
             function: function.to_string(),
             reason: "No result returned from resolver".to_string(),
-        })
+        })?;
+
+        // Check if the result is an error
+        if let Some(err) = result.get("__error") {
+            return Err(DenoError::JsError(err.as_str().unwrap_or("Unknown error").to_string()));
+        }
+
+        Ok(result)
     }
 }
