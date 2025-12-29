@@ -155,6 +155,11 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
         if let Some(generated) = typescript::generate_types(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
+
+        // Generate TypeScript resolver contracts
+        if let Some(generated) = typescript::generate_resolvers(file_descriptor, &request.proto_file)? {
+            files.push(generated);
+        }
     }
 
     Ok(CodeGeneratorResponse {

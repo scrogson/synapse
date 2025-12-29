@@ -260,3 +260,385 @@ fn extract_type_name(type_name: &str) -> String {
         .unwrap_or(type_name)
         .to_string()
 }
+
+// =============================================================================
+// Resolver Contract Generation
+// =============================================================================
+
+/// Generate TypeScript resolver contracts for all messages in a package
+pub fn generate_resolvers(
+    file: &FileDescriptorProto,
+    all_files: &[FileDescriptorProto],
+) -> Result<Option<File>, GeneratorError> {
+    let package = file.package.as_deref().unwrap_or("");
+
+    let mut virtual_field_interfaces = Vec::new();
+    let mut field_override_interfaces = Vec::new();
+    let mut module_contracts = Vec::new();
+    let mut imports = std::collections::HashSet::new();
+
+    // Collect messages with resolver options
+    for proto_file in all_files {
+        let proto_package = proto_file.package.as_deref().unwrap_or("");
+        if proto_package != package {
+            continue;
+        }
+
+        let proto_file_name = proto_file.name.as_deref().unwrap_or("");
+        for message in &proto_file.message_type {
+            let msg_name = message.name.as_deref().unwrap_or("");
+
+            // Check for message-level resolver options (virtual fields)
+            if let Some(resolver_opts) = get_cached_graphql_resolver_options(proto_file_name, msg_name) {
+                if !resolver_opts.fields.is_empty() {
+                    imports.insert(msg_name.to_string());
+                    if let Some(interface) = generate_virtual_field_interface(msg_name, &resolver_opts.fields)? {
+                        virtual_field_interfaces.push(interface);
+                    }
+                    if let Some(module) = generate_resolver_module(msg_name, &resolver_opts.fields, &resolver_opts.deno)? {
+                        module_contracts.push(module);
+                    }
+                }
+            }
+
+            // Check for field-level resolver overrides
+            let field_overrides = collect_field_overrides(proto_file_name, msg_name, message);
+            if !field_overrides.is_empty() {
+                imports.insert(msg_name.to_string());
+                if let Some(interface) = generate_field_override_interface(msg_name, message, &field_overrides)? {
+                    field_override_interfaces.push(interface);
+                }
+            }
+        }
+    }
+
+    // Also check for RPC resolver overrides in services
+    let mut rpc_interfaces = Vec::new();
+    for proto_file in all_files {
+        let proto_package = proto_file.package.as_deref().unwrap_or("");
+        if proto_package != package {
+            continue;
+        }
+
+        let proto_file_name = proto_file.name.as_deref().unwrap_or("");
+        for service in &proto_file.service {
+            let svc_name = service.name.as_deref().unwrap_or("");
+            if let Some(interface) = generate_rpc_resolver_interface(proto_file_name, svc_name, service)? {
+                rpc_interfaces.push(interface);
+            }
+        }
+    }
+
+    // If no resolver contracts, don't generate the file
+    if virtual_field_interfaces.is_empty()
+        && field_override_interfaces.is_empty()
+        && rpc_interfaces.is_empty()
+    {
+        return Ok(None);
+    }
+
+    // Build imports
+    let import_list: Vec<_> = imports.into_iter().collect();
+    let imports_section = if import_list.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "import type {{ {} }} from \"./types\";\n\n",
+            import_list.join(", ")
+        )
+    };
+
+    // Build content sections
+    let mut sections = Vec::new();
+
+    if !virtual_field_interfaces.is_empty() {
+        sections.push(format!(
+            "// =============================================================================\n\
+             // Virtual Field Resolvers\n\
+             // =============================================================================\n\n\
+             {}",
+            virtual_field_interfaces.join("\n\n")
+        ));
+    }
+
+    if !field_override_interfaces.is_empty() {
+        sections.push(format!(
+            "// =============================================================================\n\
+             // Field Override Resolvers\n\
+             // =============================================================================\n\n\
+             {}",
+            field_override_interfaces.join("\n\n")
+        ));
+    }
+
+    if !rpc_interfaces.is_empty() {
+        sections.push(format!(
+            "// =============================================================================\n\
+             // RPC Resolvers\n\
+             // =============================================================================\n\n\
+             {}",
+            rpc_interfaces.join("\n\n")
+        ));
+    }
+
+    if !module_contracts.is_empty() {
+        sections.push(format!(
+            "// =============================================================================\n\
+             // Module Export Contracts\n\
+             // =============================================================================\n\n\
+             {}",
+            module_contracts.join("\n\n")
+        ));
+    }
+
+    let output_filename = format!("{}/typescript/resolvers.d.ts", package.replace('.', "/"));
+
+    let content = format!(
+        r#"/**
+ * TypeScript resolver contracts generated from protobuf options
+ *
+ * These interfaces define the type-safe contract for custom Deno resolvers.
+ * Implement the required module exports to provide custom resolver logic.
+ *
+ * @generated by protoc-gen-synapse
+ * DO NOT EDIT MANUALLY
+ */
+
+import type {{ FieldResolver, RootResolver, ResolverContext }} from "@synapse/runtime";
+{}{}
+"#,
+        imports_section,
+        sections.join("\n\n")
+    );
+
+    Ok(Some(File {
+        name: Some(output_filename),
+        content: Some(content),
+        ..Default::default()
+    }))
+}
+
+/// Represents a field with resolver override
+struct FieldOverride {
+    field_name: String,
+    field_number: i32,
+    ts_type: String,
+}
+
+/// Collect fields with resolver overrides from a message
+fn collect_field_overrides(
+    file_name: &str,
+    msg_name: &str,
+    message: &DescriptorProto,
+) -> Vec<FieldOverride> {
+    use crate::storage::seaorm::options::get_cached_graphql_field_resolver_options;
+
+    let mut overrides = Vec::new();
+    for field in &message.field {
+        let field_number = field.number.unwrap_or(0);
+        if get_cached_graphql_field_resolver_options(file_name, msg_name, field_number).is_some() {
+            let field_name = field.name.as_deref().unwrap_or("");
+            let ts_type = proto_type_to_typescript(field);
+            overrides.push(FieldOverride {
+                field_name: field_name.to_lower_camel_case(),
+                field_number,
+                ts_type,
+            });
+        }
+    }
+    overrides
+}
+
+/// Generate interface for virtual field resolvers
+fn generate_virtual_field_interface(
+    msg_name: &str,
+    fields: &[crate::options::synapse::graphql::VirtualField],
+) -> Result<Option<String>, GeneratorError> {
+    if fields.is_empty() {
+        return Ok(None);
+    }
+
+    let mut field_defs = Vec::new();
+    for field in fields {
+        let field_name = field.name.to_lower_camel_case();
+        let result_type = graphql_type_to_typescript(&field.r#type);
+
+        // Build args type
+        let args_type = if field.arguments.is_empty() {
+            "Record<string, never>".to_string()
+        } else {
+            let arg_fields: Vec<String> = field
+                .arguments
+                .iter()
+                .map(|arg| {
+                    let arg_name = arg.name.to_lower_camel_case();
+                    let arg_type = graphql_type_to_typescript(&arg.r#type);
+                    // Check if optional (no ! at end or has default)
+                    let is_optional = !arg.r#type.ends_with('!') || arg.default_value.is_some();
+                    if is_optional {
+                        format!("{}?: {}", arg_name, arg_type.trim_start_matches("Nullable<").trim_end_matches('>'))
+                    } else {
+                        format!("{}: {}", arg_name, arg_type)
+                    }
+                })
+                .collect();
+            format!("{{ {} }}", arg_fields.join("; "))
+        };
+
+        // Add description as JSDoc if present
+        let comment = field
+            .description
+            .as_ref()
+            .map(|d| format!("  /** {} */\n", d))
+            .unwrap_or_default();
+
+        field_defs.push(format!(
+            "{}  {}: FieldResolver<{}, {}, {}>;",
+            comment, field_name, msg_name, args_type, result_type
+        ));
+    }
+
+    Ok(Some(format!(
+        "/** Virtual field resolvers for {} */\n\
+         export interface {}VirtualFields {{\n\
+         {}\n\
+         }}",
+        msg_name,
+        msg_name,
+        field_defs.join("\n")
+    )))
+}
+
+/// Generate interface for field override resolvers
+fn generate_field_override_interface(
+    msg_name: &str,
+    message: &DescriptorProto,
+    overrides: &[FieldOverride],
+) -> Result<Option<String>, GeneratorError> {
+    if overrides.is_empty() {
+        return Ok(None);
+    }
+
+    let mut field_defs = Vec::new();
+    for override_field in overrides {
+        // Find the original field to get its type
+        let original_field = message
+            .field
+            .iter()
+            .find(|f| f.number == Some(override_field.field_number));
+
+        let result_type = if let Some(field) = original_field {
+            proto_type_to_typescript(field)
+        } else {
+            override_field.ts_type.clone()
+        };
+
+        field_defs.push(format!(
+            "  {}: FieldResolver<{}, Record<string, never>, {}>;",
+            override_field.field_name, msg_name, result_type
+        ));
+    }
+
+    Ok(Some(format!(
+        "/** Field override resolvers for {} */\n\
+         export interface {}FieldOverrides {{\n\
+         {}\n\
+         }}",
+        msg_name,
+        msg_name,
+        field_defs.join("\n")
+    )))
+}
+
+/// Generate resolver module export contract
+fn generate_resolver_module(
+    msg_name: &str,
+    fields: &[crate::options::synapse::graphql::VirtualField],
+    _deno_config: &Option<crate::options::synapse::graphql::DenoConfig>,
+) -> Result<Option<String>, GeneratorError> {
+    if fields.is_empty() {
+        return Ok(None);
+    }
+
+    let field_names: Vec<String> = fields
+        .iter()
+        .map(|f| f.name.to_lower_camel_case())
+        .collect();
+
+    let field_refs: Vec<String> = field_names
+        .iter()
+        .map(|name| format!("  {}: {}VirtualFields[\"{}\"];", name, msg_name, name))
+        .collect();
+
+    let first_field = field_names.first().map(|s| s.as_str()).unwrap_or("");
+
+    Ok(Some(format!(
+        r#"/**
+ * Module export contract for {} resolvers.
+ *
+ * Your Deno module must export these functions:
+ * ```typescript
+ * export const {}: {}ResolverModule["{}"]
+ * ```
+ */
+export interface {}ResolverModule {{
+{}
+}}"#,
+        msg_name,
+        first_field,
+        msg_name,
+        first_field,
+        msg_name,
+        field_refs.join("\n")
+    )))
+}
+
+/// Generate RPC resolver interface for a service
+fn generate_rpc_resolver_interface(
+    file_name: &str,
+    svc_name: &str,
+    service: &prost_types::ServiceDescriptorProto,
+) -> Result<Option<String>, GeneratorError> {
+    use crate::storage::seaorm::options::get_cached_graphql_method_resolver_options;
+
+    let mut method_defs = Vec::new();
+
+    for method in &service.method {
+        let method_name = method.name.as_deref().unwrap_or("");
+        if get_cached_graphql_method_resolver_options(file_name, svc_name, method_name).is_some() {
+            let ts_method_name = method_name.to_lower_camel_case();
+
+            // Get input and output types
+            let input_type = method
+                .input_type
+                .as_ref()
+                .map(|t| extract_type_name(t))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let output_type = method
+                .output_type
+                .as_ref()
+                .map(|t| extract_type_name(t))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            method_defs.push(format!(
+                "  {}: RootResolver<{}, {}>;",
+                ts_method_name, input_type, output_type
+            ));
+        }
+    }
+
+    if method_defs.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "/** Custom RPC resolvers for {} */\n\
+         export interface {}Resolvers {{\n\
+         {}\n\
+         }}",
+        svc_name,
+        svc_name,
+        method_defs.join("\n")
+    )))
+}
