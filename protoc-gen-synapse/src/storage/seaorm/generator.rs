@@ -80,6 +80,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             if get_cached_entity_options(file_name, msg_name).is_some() {
                 continue;
             }
+            // Generate domain type if has validate options with generate_conversion
+            if let Some(generated) = validate::generate(file_descriptor, message)? {
+                files.push(generated);
+            }
             // Generate GraphQL input types for request messages
             if let Some(generated) = graphql::generate_message(file_descriptor, message)? {
                 files.push(generated);
@@ -116,11 +120,15 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 
         // Process each service in the file
         for svc in &file_descriptor.service {
-            // Storage trait generation
+            // Storage defaults generation (standalone functions for partial overrides)
+            if let Some(generated) = crate::storage::generate_defaults(file_descriptor, svc, &request.proto_file)? {
+                files.push(generated);
+            }
+            // Storage trait generation (with default impls that call defaults)
             if let Some(generated) = crate::storage::generate(file_descriptor, svc)? {
                 files.push(generated);
             }
-            // Storage implementation generation (SeaORM-based)
+            // Storage implementation generation (minimal SeaORM-based impl)
             if let Some(generated) = implementation::generate(file_descriptor, svc, &request.proto_file)? {
                 files.push(generated);
             }

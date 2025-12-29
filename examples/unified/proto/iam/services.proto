@@ -5,6 +5,7 @@ package iam;
 import "synapse/graphql/options.proto";
 import "synapse/grpc/options.proto";
 import "synapse/storage/options.proto";
+import "synapse/validate/options.proto";
 import "synapse/relay/types.proto";
 import "iam/entities.proto";
 
@@ -132,9 +133,22 @@ message ListUsersRequest {
 }
 
 message CreateUserRequest {
-  string email = 1;
-  string name = 2;
-  optional string avatar_url = 3;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateUser"
+  };
+
+  string email = 1 [(synapse.validate.field).rules = {
+    required: true
+    email: true
+  }];
+  string name = 2 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
+  }];
+  optional string avatar_url = 3 [(synapse.validate.field).rules = {
+    url: true
+  }];
   optional int64 organization_id = 4;
 }
 
@@ -143,10 +157,23 @@ message CreateUserResponse {
 }
 
 message UpdateUserRequest {
-  int64 id = 1;
-  optional string email = 2;
-  optional string name = 3;
-  optional string avatar_url = 4;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "UpdateUser"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules = {
+    required: true
+  }];
+  optional string email = 2 [(synapse.validate.field).rules = {
+    email: true
+  }];
+  optional string name = 3 [(synapse.validate.field).rules = {
+    length: { min: 1, max: 100 }
+  }];
+  optional string avatar_url = 4 [(synapse.validate.field).rules = {
+    url: true
+  }];
   optional int64 organization_id = 5;
   optional bool is_active = 6;
 }
@@ -181,9 +208,23 @@ message ListOrganizationsRequest {
 }
 
 message CreateOrganizationRequest {
-  string name = 1;
-  string slug = 2;
-  optional string description = 3;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateOrganization"
+  };
+
+  string name = 1 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
+  }];
+  string slug = 2 [(synapse.validate.field).rules = {
+    required: true
+    pattern: "^[a-z0-9-]+$"
+    length: { min: 1, max: 50 }
+  }];
+  optional string description = 3 [(synapse.validate.field).rules = {
+    length: { max: 500 }
+  }];
 }
 
 message CreateOrganizationResponse {
@@ -191,10 +232,24 @@ message CreateOrganizationResponse {
 }
 
 message UpdateOrganizationRequest {
-  int64 id = 1;
-  optional string name = 2;
-  optional string slug = 3;
-  optional string description = 4;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "UpdateOrganization"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules = {
+    required: true
+  }];
+  optional string name = 2 [(synapse.validate.field).rules = {
+    length: { min: 1, max: 100 }
+  }];
+  optional string slug = 3 [(synapse.validate.field).rules = {
+    pattern: "^[a-z0-9-]+$"
+    length: { min: 1, max: 50 }
+  }];
+  optional string description = 4 [(synapse.validate.field).rules = {
+    length: { max: 500 }
+  }];
 }
 
 message UpdateOrganizationResponse {
@@ -227,10 +282,26 @@ message ListTeamsRequest {
 }
 
 message CreateTeamRequest {
-  string name = 1;
-  string slug = 2;
-  optional string description = 3;
-  int64 organization_id = 4;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateTeam"
+  };
+
+  string name = 1 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
+  }];
+  string slug = 2 [(synapse.validate.field).rules = {
+    required: true
+    pattern: "^[a-z0-9-]+$"
+    length: { min: 1, max: 50 }
+  }];
+  optional string description = 3 [(synapse.validate.field).rules = {
+    length: { max: 500 }
+  }];
+  int64 organization_id = 4 [(synapse.validate.field).rules = {
+    required: true
+  }];
 }
 
 message CreateTeamResponse {
@@ -238,10 +309,24 @@ message CreateTeamResponse {
 }
 
 message UpdateTeamRequest {
-  int64 id = 1;
-  optional string name = 2;
-  optional string slug = 3;
-  optional string description = 4;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "UpdateTeam"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules = {
+    required: true
+  }];
+  optional string name = 2 [(synapse.validate.field).rules = {
+    length: { min: 1, max: 100 }
+  }];
+  optional string slug = 3 [(synapse.validate.field).rules = {
+    pattern: "^[a-z0-9-]+$"
+    length: { min: 1, max: 50 }
+  }];
+  optional string description = 4 [(synapse.validate.field).rules = {
+    length: { max: 500 }
+  }];
 }
 
 message UpdateTeamResponse {

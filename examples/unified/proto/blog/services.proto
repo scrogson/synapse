@@ -5,6 +5,7 @@ package blog;
 import "synapse/graphql/options.proto";
 import "synapse/grpc/options.proto";
 import "synapse/storage/options.proto";
+import "synapse/validate/options.proto";
 import "synapse/relay/types.proto";
 import "blog/entities.proto";
 
@@ -97,6 +98,11 @@ message ListAuthorsRequest {
 }
 
 message CreateAuthorRequest {
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateAuthor"
+  };
+
   // Automatically set to the current authenticated user's ID
   // Not exposed in GraphQL input - populated server-side from auth context
   int64 user_id = 1 [(synapse.graphql.field).from_context = {
@@ -104,8 +110,13 @@ message CreateAuthorRequest {
     required: true
   }];
 
-  string pen_name = 2;
-  optional string bio = 3;
+  string pen_name = 2 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
+  }];
+  optional string bio = 3 [(synapse.validate.field).rules = {
+    length: { max: 1000 }
+  }];
 }
 
 message CreateAuthorResponse {
@@ -113,9 +124,20 @@ message CreateAuthorResponse {
 }
 
 message UpdateAuthorRequest {
-  int64 id = 1;
-  optional string pen_name = 2;
-  optional string bio = 3;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "UpdateAuthor"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules = {
+    required: true
+  }];
+  optional string pen_name = 2 [(synapse.validate.field).rules = {
+    length: { min: 1, max: 100 }
+  }];
+  optional string bio = 3 [(synapse.validate.field).rules = {
+    length: { max: 1000 }
+  }];
 }
 
 message UpdateAuthorResponse {
@@ -148,10 +170,23 @@ message ListPostsRequest {
 }
 
 message CreatePostRequest {
-  string title = 1;
-  string content = 2;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreatePost"
+  };
+
+  string title = 1 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 200 }
+  }];
+  string content = 2 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1 }
+  }];
   bool published = 3;
-  int64 author_id = 4;
+  int64 author_id = 4 [(synapse.validate.field).rules = {
+    required: true
+  }];
 }
 
 message CreatePostResponse {
@@ -159,9 +194,20 @@ message CreatePostResponse {
 }
 
 message UpdatePostRequest {
-  int64 id = 1;
-  optional string title = 2;
-  optional string content = 3;
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "UpdatePost"
+  };
+
+  int64 id = 1 [(synapse.validate.field).rules = {
+    required: true
+  }];
+  optional string title = 2 [(synapse.validate.field).rules = {
+    length: { min: 1, max: 200 }
+  }];
+  optional string content = 3 [(synapse.validate.field).rules = {
+    length: { min: 1 }
+  }];
   optional bool published = 4;
 }
 

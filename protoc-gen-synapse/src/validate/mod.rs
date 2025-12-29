@@ -44,19 +44,23 @@ pub fn generate(
         module_name
     );
 
-    // Generate field definitions and validation
-    let (field_defs, field_validations, field_assignments) =
-        generate_fields(file_name, message_name, &message.field)?;
-
     // Build identifiers
     let domain_ident = format_ident!("{}", domain_name);
     let proto_ident = format_ident!("{}", proto_name);
     let error_ident = format_ident!("{}ValidationError", domain_name);
+    let field_error_ident = format_ident!("{}FieldError", domain_name);
+
+    // Generate field definitions and validation
+    let (field_defs, field_validations, field_assignments) =
+        generate_fields(file_name, message_name, &message.field, &field_error_ident)?;
 
     // Build doc comments
     let module_doc = format!("Domain type {} generated from {}", domain_name, proto_name);
     let struct_doc = format!("Validated domain type for {}", proto_name);
     let error_doc = format!("Validation error for {} conversion", domain_name);
+
+    // Generate field error type name
+    let field_error_ident = format_ident!("{}FieldError", domain_name);
 
     let code = quote! {
         #![doc = #module_doc]
@@ -69,6 +73,25 @@ pub fn generate(
 
         use super::prelude::*;
 
+        /// A single field validation error
+        #[derive(Debug, Clone)]
+        pub struct #field_error_ident {
+            /// Error code (e.g., "required", "invalid_email", "min_length")
+            pub code: String,
+            /// Human-readable error message
+            pub message: String,
+            /// Field name that failed validation
+            pub field: String,
+        }
+
+        impl std::fmt::Display for #field_error_ident {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}: {}", self.field, self.message)
+            }
+        }
+
+        impl std::error::Error for #field_error_ident {}
+
         #[doc = #struct_doc]
         #[derive(Debug, Clone)]
         pub struct #domain_ident {
@@ -78,13 +101,18 @@ pub fn generate(
         #[doc = #error_doc]
         #[derive(Debug)]
         pub struct #error_ident {
-            errors: Vec<synapse::Error>,
+            errors: Vec<#field_error_ident>,
         }
 
         impl #error_ident {
-            /// Convert validation errors to synapse::Error list for rich error responses
-            pub fn into_errors(self) -> Vec<synapse::Error> {
+            /// Convert validation errors to a list of field errors
+            pub fn into_errors(self) -> Vec<#field_error_ident> {
                 self.errors
+            }
+
+            /// Get a reference to the validation errors
+            pub fn errors(&self) -> &[#field_error_ident] {
+                &self.errors
             }
         }
 
@@ -136,6 +164,7 @@ fn generate_fields(
     file_name: &str,
     message_name: &str,
     fields: &[FieldDescriptorProto],
+    field_error_ident: &proc_macro2::Ident,
 ) -> Result<(Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>), GeneratorError> {
     let mut field_defs = Vec::new();
     let mut field_validations = Vec::new();
@@ -179,7 +208,7 @@ fn generate_fields(
         // Generate validation code based on field options
         if let Some(ref opts) = field_opts {
             if let Some(ref rules) = opts.rules {
-                let validation = generate_field_validation(field_name, &field_ident, rules);
+                let validation = generate_field_validation(field_name, &field_ident, field, rules, field_error_ident);
                 if !validation.is_empty() {
                     field_validations.push(validation);
                 }
@@ -192,11 +221,10 @@ fn generate_fields(
             let field_name_str = field_name;
             field_assignments.push(quote! {
                 #field_ident: #type_ident::from_str(&request.#field_ident)
-                    .map_err(|e| errors.push(synapse::Error {
+                    .map_err(|e| errors.push(#field_error_ident {
                         code: "invalid_format".to_string(),
                         message: e.to_string(),
                         field: #field_name_str.to_string(),
-                        details: Default::default(),
                     }))
                     .unwrap_or_default(),
             });
@@ -214,105 +242,194 @@ fn generate_fields(
 fn generate_field_validation(
     field_name: &str,
     field_ident: &proc_macro2::Ident,
+    field: &FieldDescriptorProto,
     rules: &validate::Rules,
+    field_error_ident: &proc_macro2::Ident,
 ) -> TokenStream {
+    use prost_types::field_descriptor_proto::Type;
+
     let mut validations = Vec::new();
+    let is_optional = field.proto3_optional.unwrap_or(false);
+    let is_string = matches!(field.r#type(), Type::String);
+    let is_bytes = matches!(field.r#type(), Type::Bytes);
 
-    // Required validation (for strings: non-empty)
+    // Required validation
     if rules.required {
-        validations.push(quote! {
-            if request.#field_ident.is_empty() {
-                errors.push(synapse::Error {
-                    code: "required".to_string(),
-                    message: format!("{} is required", #field_name),
-                    field: #field_name.to_string(),
-                    details: Default::default(),
+        if is_optional {
+            // For optional fields, required means it must be Some
+            validations.push(quote! {
+                if request.#field_ident.is_none() {
+                    errors.push(#field_error_ident {
+                        code: "required".to_string(),
+                        message: format!("{} is required", #field_name),
+                        field: #field_name.to_string(),
+                    });
+                }
+            });
+        } else if is_string || is_bytes {
+            // For strings/bytes, required means non-empty
+            validations.push(quote! {
+                if request.#field_ident.is_empty() {
+                    errors.push(#field_error_ident {
+                        code: "required".to_string(),
+                        message: format!("{} is required", #field_name),
+                        field: #field_name.to_string(),
+                    });
+                }
+            });
+        }
+        // For numeric types, there's no meaningful "required" check since 0 is a valid value
+        // The field is always present in proto3
+    }
+
+    // String-specific validations - only apply to string fields
+    if is_string {
+        // Email validation
+        if rules.email {
+            if is_optional {
+                validations.push(quote! {
+                    if let Some(ref value) = request.#field_ident {
+                        if !value.is_empty() && !value.contains('@') {
+                            errors.push(#field_error_ident {
+                                code: "invalid_email".to_string(),
+                                message: format!("{} must be a valid email address", #field_name),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    }
+                });
+            } else {
+                validations.push(quote! {
+                    if !request.#field_ident.is_empty() && !request.#field_ident.contains('@') {
+                        errors.push(#field_error_ident {
+                            code: "invalid_email".to_string(),
+                            message: format!("{} must be a valid email address", #field_name),
+                            field: #field_name.to_string(),
+                        });
+                    }
                 });
             }
-        });
-    }
+        }
 
-    // Email validation
-    if rules.email {
-        validations.push(quote! {
-            if !request.#field_ident.is_empty() && !request.#field_ident.contains('@') {
-                errors.push(synapse::Error {
-                    code: "invalid_email".to_string(),
-                    message: format!("{} must be a valid email address", #field_name),
-                    field: #field_name.to_string(),
-                    details: Default::default(),
+        // Length validation
+        if let Some(ref length) = rules.length {
+            // Min length validation
+            if length.min.is_some() && length.min.unwrap() > 0 {
+                let min_val = length.min.unwrap() as usize;
+                if is_optional {
+                    validations.push(quote! {
+                        if let Some(ref value) = request.#field_ident {
+                            if value.len() < #min_val {
+                                errors.push(#field_error_ident {
+                                    code: "min_length".to_string(),
+                                    message: format!("{} must be at least {} characters", #field_name, #min_val),
+                                    field: #field_name.to_string(),
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    validations.push(quote! {
+                        if request.#field_ident.len() < #min_val {
+                            errors.push(#field_error_ident {
+                                code: "min_length".to_string(),
+                                message: format!("{} must be at least {} characters", #field_name, #min_val),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    });
+                }
+            }
+
+            // Max length validation
+            if length.max.is_some() && length.max.unwrap() > 0 {
+                let max_val = length.max.unwrap() as usize;
+                if is_optional {
+                    validations.push(quote! {
+                        if let Some(ref value) = request.#field_ident {
+                            if value.len() > #max_val {
+                                errors.push(#field_error_ident {
+                                    code: "max_length".to_string(),
+                                    message: format!("{} must be at most {} characters", #field_name, #max_val),
+                                    field: #field_name.to_string(),
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    validations.push(quote! {
+                        if request.#field_ident.len() > #max_val {
+                            errors.push(#field_error_ident {
+                                code: "max_length".to_string(),
+                                message: format!("{} must be at most {} characters", #field_name, #max_val),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    });
+                }
+            }
+
+            // Equal length validation
+            if length.equal.is_some() && length.equal.unwrap() > 0 {
+                let equal_val = length.equal.unwrap() as usize;
+                if is_optional {
+                    validations.push(quote! {
+                        if let Some(ref value) = request.#field_ident {
+                            if value.len() != #equal_val {
+                                errors.push(#field_error_ident {
+                                    code: "exact_length".to_string(),
+                                    message: format!("{} must be exactly {} characters", #field_name, #equal_val),
+                                    field: #field_name.to_string(),
+                                });
+                            }
+                        }
+                    });
+                } else {
+                    validations.push(quote! {
+                        if request.#field_ident.len() != #equal_val {
+                            errors.push(#field_error_ident {
+                                code: "exact_length".to_string(),
+                                message: format!("{} must be exactly {} characters", #field_name, #equal_val),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    });
+                }
+            }
+        }
+
+        // Pattern validation
+        if !rules.pattern.is_empty() {
+            let pattern = &rules.pattern;
+            if is_optional {
+                validations.push(quote! {
+                    if let Some(ref value) = request.#field_ident {
+                        let re = regex::Regex::new(#pattern).expect("invalid regex pattern");
+                        if !re.is_match(value) {
+                            errors.push(#field_error_ident {
+                                code: "pattern".to_string(),
+                                message: format!("{} does not match required pattern", #field_name),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    }
+                });
+            } else {
+                validations.push(quote! {
+                    {
+                        let re = regex::Regex::new(#pattern).expect("invalid regex pattern");
+                        if !re.is_match(&request.#field_ident) {
+                            errors.push(#field_error_ident {
+                                code: "pattern".to_string(),
+                                message: format!("{} does not match required pattern", #field_name),
+                                field: #field_name.to_string(),
+                            });
+                        }
+                    }
                 });
             }
-        });
-    }
-
-    // Length validation
-    if let Some(ref length) = rules.length {
-        // Only generate min validation if min is explicitly set and > 0
-        if length.min.is_some() && length.min.unwrap() > 0 {
-            let min_val = length.min.unwrap() as usize;
-            validations.push(quote! {
-                if request.#field_ident.len() < #min_val {
-                    errors.push(synapse::Error {
-                        code: "min_length".to_string(),
-                        message: format!("{} must be at least {} characters", #field_name, #min_val),
-                        field: #field_name.to_string(),
-                        details: Default::default(),
-                    });
-                }
-            });
-        }
-        // Only generate max validation if max is explicitly set and > 0
-        if length.max.is_some() && length.max.unwrap() > 0 {
-            let max_val = length.max.unwrap() as usize;
-            validations.push(quote! {
-                if request.#field_ident.len() > #max_val {
-                    errors.push(synapse::Error {
-                        code: "max_length".to_string(),
-                        message: format!("{} must be at most {} characters", #field_name, #max_val),
-                        field: #field_name.to_string(),
-                        details: Default::default(),
-                    });
-                }
-            });
-        }
-        // Only generate equal validation if equal is explicitly set and > 0
-        if length.equal.is_some() && length.equal.unwrap() > 0 {
-            let equal_val = length.equal.unwrap() as usize;
-            validations.push(quote! {
-                if request.#field_ident.len() != #equal_val {
-                    errors.push(synapse::Error {
-                        code: "exact_length".to_string(),
-                        message: format!("{} must be exactly {} characters", #field_name, #equal_val),
-                        field: #field_name.to_string(),
-                        details: Default::default(),
-                    });
-                }
-            });
         }
     }
-
-    // Pattern validation
-    if !rules.pattern.is_empty() {
-        let pattern = &rules.pattern;
-        validations.push(quote! {
-            {
-                let re = regex::Regex::new(#pattern).expect("invalid regex pattern");
-                if !re.is_match(&request.#field_ident) {
-                    errors.push(synapse::Error {
-                        code: "pattern".to_string(),
-                        message: format!("{} does not match required pattern", #field_name),
-                        field: #field_name.to_string(),
-                        details: Default::default(),
-                    });
-                }
-            }
-        });
-    }
-
-    // Custom error message override
-    // Note: We don't use this directly here, but it could be used to override the message
-    // in the generated code. For now, we use standard messages.
 
     quote! {
         #(#validations)*
