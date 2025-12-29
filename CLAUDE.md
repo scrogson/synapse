@@ -1,159 +1,124 @@
 # Synapse
 
-A federated, protobuf-centric data platform.
+A protobuf-centric code generation framework for building type-safe backends.
 
 ## Vision
 
-Synapse provides a unified schema definition layer using Protocol Buffers that generates type-safe code across multiple languages and storage backends. Define your data model once in proto, get consistent APIs everywhere.
+Define your data model once in Protocol Buffers with Synapse annotations. Generate type-safe database entities, gRPC services, GraphQL APIs, and validated domain types—all from a single source of truth.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                     Proto Definitions                        │
-│                                                              │
-│  message User {                                              │
-│    int64 id = 1 [(synapse.storage.column).primary_key = true];│
-│    string email = 2 [(synapse.storage.column).unique = true];│
-│  }                                                           │
+│                   (with synapse.* options)                   │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    protoc-gen-synapse                        │
 │                                                              │
-│  Parses proto + synapse.* options, builds abstract IR        │
+│  Parses proto files, reads synapse.* extensions,             │
+│  generates code for all layers                               │
 └─────────────────────────────────────────────────────────────┘
                               │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-        ┌──────────┐   ┌──────────┐   ┌──────────┐
-        │  SeaORM  │   │   Ecto   │   │   GORM   │
-        │ Backend  │   │ Backend  │   │ Backend  │
-        └──────────┘   └──────────┘   └──────────┘
-              │               │               │
-              ▼               ▼               ▼
-        ┌──────────┐   ┌──────────┐   ┌──────────┐
-        │   Rust   │   │  Elixir  │   │    Go    │
-        │ Entities │   │ Schemas  │   │  Models  │
-        └──────────┘   └──────────┘   └──────────┘
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+    ┌──────────┐        ┌──────────┐        ┌──────────┐
+    │  SeaORM  │        │   gRPC   │        │ GraphQL  │
+    │ Entities │        │ Services │        │ Resolvers│
+    └──────────┘        └──────────┘        └──────────┘
+          │                   │                   │
+          └───────────────────┼───────────────────┘
+                              ▼
+                    ┌──────────────────┐
+                    │  Your Application │
+                    └──────────────────┘
 ```
 
 ## Namespaces
 
+| Namespace | Purpose |
+|-----------|---------|
+| `synapse.storage` | Database entities, columns, relations |
+| `synapse.graphql` | GraphQL types, queries, mutations, field options |
+| `synapse.grpc` | gRPC service generation |
+| `synapse.validate` | Request validation and domain type generation |
+| `synapse.relay` | Relay-style pagination types (PageInfo, filters, connections) |
+
 ### `synapse.storage`
 
-Database/persistence layer options. Backend-agnostic annotations for entities, columns, and relations.
+Database/persistence layer options for entities, columns, and relations.
 
 ```protobuf
-import "synapse/storage/options.proto";
-
 message User {
   option (synapse.storage.entity) = {
     table_name: "users"
+    relations: [{
+      name: "posts"
+      type: RELATION_TYPE_HAS_MANY
+      related: "Post"
+      foreign_key: "author_id"
+    }]
   };
 
-  int64 id = 1 [(synapse.storage.column) = {
-    primary_key: true
-  }];
-
-  string email = 2 [(synapse.storage.column) = {
-    unique: true
-  }];
-
+  int64 id = 1 [(synapse.storage.column).primary_key = true];
+  string email = 2 [(synapse.storage.column).unique = true];
   optional string bio = 3;  // nullable in DB
+}
+```
 
-  repeated Post posts = 4 [(synapse.storage.relation) = {
-    type: HAS_MANY
-    foreign_key: "author_id"
+### `synapse.validate`
+
+Request validation with domain type generation.
+
+```protobuf
+message CreateUserRequest {
+  option (synapse.validate.message) = {
+    generate_conversion: true
+    name: "CreateUser"
+  };
+
+  string email = 1 [(synapse.validate.field).rules = {
+    required: true
+    email: true
+  }];
+
+  string name = 2 [(synapse.validate.field).rules = {
+    required: true
+    length: { min: 1, max: 100 }
   }];
 }
 ```
 
-### Future Namespaces
+Generates `CreateUser` domain type with `TryFrom<CreateUserRequest>` validation.
 
-- `synapse.api` - API layer (REST/GraphQL generation)
-- `synapse.event` - Event sourcing / message bus
-- `synapse.cache` - Caching layer annotations
-- `synapse.search` - Search index definitions
+### `synapse.graphql`
+
+GraphQL type and resolver generation.
+
+```protobuf
+message User {
+  option (synapse.graphql.message) = { node: true };  // Relay Node interface
+
+  int64 author_id = 5 [(synapse.graphql.field).skip = true];  // Hide from schema
+}
+
+service UserService {
+  option (synapse.graphql.service) = {};
+
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (synapse.graphql.query) = { name: "user" };
+  };
+}
+```
 
 ## Storage Backends
 
 | Backend | Language | Status |
 |---------|----------|--------|
-| SeaORM | Rust | In Progress (see protoc-gen-seaorm) |
-| Ecto | Elixir | Planned |
-| GORM | Go | Planned |
-| Diesel | Rust | Planned |
-| SQLAlchemy | Python | Planned |
-
-## Core Concepts
-
-### Entity Options (`synapse.storage.entity`)
-
-```protobuf
-message EntityOptions {
-  // Database table name (defaults to snake_case of message name)
-  string table_name = 1;
-
-  // Skip code generation for this message
-  bool skip = 2;
-
-  // Relation definitions (message-level)
-  repeated RelationDef relations = 3;
-}
-```
-
-### Column Options (`synapse.storage.column`)
-
-```protobuf
-message ColumnOptions {
-  // Primary key
-  bool primary_key = 1;
-
-  // Auto-increment (defaults true for primary keys)
-  bool auto_increment = 2;
-
-  // Unique constraint
-  bool unique = 3;
-
-  // Override column name
-  string column_name = 4;
-
-  // Default value expression
-  string default_value = 5;
-
-  // Backend-specific type hints
-  map<string, string> type_hints = 10;
-}
-```
-
-### Relation Options (`synapse.storage.relation`)
-
-```protobuf
-enum RelationType {
-  RELATION_TYPE_UNSPECIFIED = 0;
-  BELONGS_TO = 1;
-  HAS_ONE = 2;
-  HAS_MANY = 3;
-  MANY_TO_MANY = 4;
-}
-
-message RelationDef {
-  RelationType type = 1;
-  string foreign_key = 2;
-  string references = 3;
-  string through = 4;  // For many-to-many
-}
-```
-
-## Design Principles
-
-1. **Proto is the source of truth** - All schema information lives in .proto files
-2. **Backend-agnostic by default** - Core options work across all backends
-3. **Escape hatches for specifics** - `type_hints` map for backend-specific needs
-4. **Convention over configuration** - Sensible defaults (snake_case tables, auto_increment PKs)
-5. **Nullable from proto** - Use `optional` keyword, not custom options
+| SeaORM | Rust | ✅ Complete |
+| Elixir (Phoenix, Ecto, Absinthe, gRPC) | Elixir | 🔮 Planned |
 
 ## Project Structure
 
@@ -161,59 +126,105 @@ message RelationDef {
 synapse/
 ├── proto/
 │   └── synapse/
-│       ├── storage/
-│       │   └── options.proto    # Storage layer options
-│       ├── api/
-│       │   └── options.proto    # API layer options (future)
-│       └── event/
-│           └── options.proto    # Event layer options (future)
-├── protoc-gen-synapse/          # Main protoc plugin (Rust)
-│   ├── src/
-│   │   ├── ir/                  # Intermediate representation
-│   │   ├── backends/
-│   │   │   ├── mod.rs
-│   │   │   ├── seaorm.rs
-│   │   │   ├── ecto.rs
-│   │   │   └── gorm.rs
-│   │   └── main.rs
-│   └── Cargo.toml
-└── examples/
-    ├── rust-seaorm/
-    ├── elixir-ecto/
-    └── go-gorm/
+│       ├── storage/options.proto   # Storage layer options
+│       ├── graphql/options.proto   # GraphQL options
+│       ├── grpc/options.proto      # gRPC options
+│       ├── validate/options.proto  # Validation options
+│       └── relay/types.proto       # Relay pagination types
+├── protoc-gen-synapse/             # Main protoc plugin (Rust)
+│   └── src/
+│       ├── main.rs
+│       ├── options/                # Proto option parsing
+│       ├── storage/                # Storage trait & defaults generation
+│       │   ├── seaorm/             # SeaORM-specific generation
+│       │   ├── traits.rs           # Storage trait generation
+│       │   └── defaults.rs         # Default impl generation
+│       ├── graphql/                # GraphQL generation
+│       ├── grpc/                   # gRPC service generation
+│       └── validate/               # Domain type generation
+├── examples/
+│   └── unified/                    # Complete example
+│       ├── proto/
+│       │   ├── iam/                # IAM service (User, Org, Team)
+│       │   └── blog/               # Blog service (Author, Post)
+│       └── src/
+│           ├── generated/          # Generated code
+│           └── bin/                # Binaries (monolith, gateway, services)
+└── Justfile                        # Development commands
 ```
 
-## Migration from protoc-gen-seaorm
+## Key Features
 
-The existing `protoc-gen-seaorm` project will be refactored:
+### Partial Override Pattern
 
-1. Rename proto options: `seaorm.*` → `synapse.storage.*`
-2. Extract backend-agnostic IR (intermediate representation)
-3. Move SeaORM-specific code to `backends/seaorm.rs`
-4. Add new backends (Ecto, GORM, etc.)
+Storage traits support partial overrides—implement `db()` and override only the methods you need:
 
-## Getting Started
+```rust
+impl UserServiceStorage for MyStorage {
+    fn db(&self) -> &DatabaseConnection { &self.db }
 
-```bash
-# Install the plugin
-cargo install protoc-gen-synapse
+    // Override just this method
+    async fn create_user(&self, request: CreateUser) -> Result<...> {
+        // Custom logic, then delegate to default
+        user_service_storage_defaults::create_user(self.db(), request).await
+    }
+    // All other methods use trait defaults
+}
+```
 
-# Generate Rust/SeaORM code
-protoc --synapse_out=backend=seaorm:./gen proto/*.proto
+### Cross-Package Relations
 
-# Generate Elixir/Ecto code
-protoc --synapse_out=backend=ecto:./gen proto/*.proto
+Entities can reference types from other packages:
+
+```protobuf
+// blog/entities.proto
+message Author {
+  option (synapse.storage.entity) = {
+    relations: [{
+      name: "user"
+      type: RELATION_TYPE_BELONGS_TO
+      related: "iam.User"  // Cross-package reference
+      foreign_key: "user_id"
+    }]
+  };
+}
+```
+
+### Relay-Style Pagination
+
+Auto-generated filter and connection types with cursor pagination:
+
+```graphql
+query {
+  users(first: 10, filter: { email: { contains: "@example.com" } }) {
+    edges { cursor node { id name } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
 ```
 
 ## Development
 
 ```bash
-# Build
-cargo build
+# Build the plugin
+just build-release
 
-# Test
-cargo test
+# Build and run the example
+just example-build
+just example-run      # Run as monolith
+just demo             # Run as microservices
 
-# Run with specific backend
-echo "..." | protoc-gen-synapse --backend=seaorm
+# Run tests
+just test
+
+# Generate test fixtures
+just generate
 ```
+
+## Design Principles
+
+1. **Proto is the source of truth** - All schema information lives in .proto files
+2. **Generate everything** - Database, gRPC, GraphQL, validation from one definition
+3. **Type safety end-to-end** - Compile-time guarantees across all layers
+4. **Performance by default** - DataLoaders, connection pooling, efficient queries
+5. **Escape hatches** - Override generated code via partial override pattern
