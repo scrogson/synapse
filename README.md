@@ -560,8 +560,7 @@ just demo  # Starts IAM, Blog, and Gateway separately
 | Validated domain types | ✅ Complete |
 | Partial override pattern | ✅ Complete |
 | Cross-package relations | ✅ Complete |
-| Ecto backend | 🔮 Planned |
-| GORM backend | 🔮 Planned |
+| Elixir backend (Phoenix, Ecto, Absinthe, gRPC) | 🔮 Planned |
 
 ## License
 
