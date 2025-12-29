@@ -6,7 +6,7 @@
 use super::{entity, enum_gen, implementation, options, package};
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
-use crate::{graphql, grpc, validate};
+use crate::{graphql, grpc, typescript, validate};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -148,6 +148,11 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 
         // Generate package mod.rs and subdirectory mod.rs files
         for generated in package::generate_all(file_descriptor, &request.proto_file)? {
+            files.push(generated);
+        }
+
+        // Generate TypeScript type definitions
+        if let Some(generated) = typescript::generate_types(file_descriptor, &request.proto_file)? {
             files.push(generated);
         }
     }

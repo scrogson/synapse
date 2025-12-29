@@ -19,6 +19,7 @@ mod graphql;
 mod grpc;
 pub mod options;
 mod storage;
+mod typescript;
 mod validate;
 
 pub use error::GeneratorError;
