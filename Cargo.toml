@@ -4,6 +4,7 @@ members = [
     "protoc-gen-synapse",
     "synapse-proto-gen",
     "synapse-deno",
+    "synapse-gen",
 ]
 exclude = [
     "examples/full-stack",

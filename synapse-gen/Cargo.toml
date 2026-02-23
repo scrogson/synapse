@@ -1,0 +1,21 @@
+[package]
+name = "synapse-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A framework for building code generators from Synapse-annotated protobuf definitions"
+keywords = ["protobuf", "codegen", "generator", "framework"]
+categories = ["development-tools"]
+
+[dependencies]
+prost.workspace = true
+prost-types.workspace = true
+prost-reflect.workspace = true
+thiserror.workspace = true
+once_cell.workspace = true
+heck.workspace = true
+
+[build-dependencies]
+prost-build = "0.13"
+prost-reflect-build = "0.15"
