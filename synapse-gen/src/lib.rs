@@ -1,5 +1,6 @@
 pub mod ir;
 mod parser;
+mod options;
 
 mod generator;
 pub use generator::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
