@@ -226,6 +226,23 @@ fn test_file_collision_detection() {
 }
 
 #[test]
+fn test_entity_has_validate_field() {
+    let entity = synapse_gen::ir::Entity {
+        name: "Test".to_string(),
+        table_name: "tests".to_string(),
+        skip: false,
+        fields: vec![],
+        relations: vec![],
+        graphql: None,
+        graphql_resolver: None,
+        validate: None,
+        raw: &prost_types::DescriptorProto::default(),
+        raw_file: &prost_types::FileDescriptorProto::default(),
+    };
+    assert!(entity.validate.is_none());
+}
+
+#[test]
 fn test_builder_method_chaining() {
     let generator = SynapseGenerator::new()
         .add(FileProducingGenerator)

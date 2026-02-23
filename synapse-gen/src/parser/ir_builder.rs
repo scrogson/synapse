@@ -150,6 +150,15 @@ fn build_entity<'a>(
         .get(&(file_name.to_string(), msg_name.to_string()))
         .map(|r| convert_graphql_resolver_options(r));
 
+    let validate = options
+        .validate_message_options
+        .get(&(file_name.to_string(), msg_name.to_string()))
+        .map(|v| ValidateMessageOptions {
+            skip: v.skip,
+            name: v.name.clone(),
+            generate_conversion: v.generate_conversion,
+        });
+
     Entity {
         name: msg_name.to_string(),
         table_name: entity_opts.table_name.clone(),
@@ -158,6 +167,7 @@ fn build_entity<'a>(
         relations,
         graphql,
         graphql_resolver,
+        validate,
         raw: msg,
         raw_file: file,
     }
