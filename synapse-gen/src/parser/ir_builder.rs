@@ -45,7 +45,7 @@ pub fn build_schema<'a>(
 
         package.raw_files.push(file);
 
-        // Process top-level messages
+        // Process top-level messages and their nested types
         for msg in &file.message_type {
             let msg_name = msg.name.clone().unwrap_or_default();
             let key = (file_name.clone(), msg_name.clone());
@@ -59,6 +59,9 @@ pub fn build_schema<'a>(
                     .messages
                     .push(build_message(file, msg, &file_name, &msg_name, options));
             }
+
+            // Recursively process nested messages
+            process_nested_messages(file, msg, &file_name, &msg_name, options, package);
         }
 
         // Process top-level enums
@@ -76,8 +79,40 @@ pub fn build_schema<'a>(
         }
     }
 
-    Schema {
-        packages: package_map.into_values().collect(),
+    let mut packages: Vec<_> = package_map.into_values().collect();
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+    Schema { packages }
+}
+
+// ---------------------------------------------------------------------------
+// Nested message processing
+// ---------------------------------------------------------------------------
+
+fn process_nested_messages<'a>(
+    file: &'a FileDescriptorProto,
+    parent_msg: &'a DescriptorProto,
+    file_name: &str,
+    parent_name: &str,
+    options: &ExtractedOptions,
+    package: &mut Package<'a>,
+) {
+    for nested in &parent_msg.nested_type {
+        let nested_name = nested.name.clone().unwrap_or_default();
+        let full_name = format!("{}.{}", parent_name, nested_name);
+        let key = (file_name.to_string(), full_name.clone());
+
+        if let Some(entity_opts) = options.entity_options.get(&key) {
+            package
+                .entities
+                .push(build_entity(file, nested, file_name, &full_name, entity_opts, options));
+        } else {
+            package
+                .messages
+                .push(build_message(file, nested, file_name, &full_name, options));
+        }
+
+        // Recurse into deeper nested messages
+        process_nested_messages(file, nested, file_name, &full_name, options, package);
     }
 }
 
@@ -435,6 +470,13 @@ fn build_method<'a>(
         None
     };
 
+    let graphql_resolver = options
+        .graphql_method_resolver_options
+        .get(&key)
+        .map(|r| GraphQLMethodResolverOptions {
+            deno: r.deno.as_ref().map(convert_deno_config),
+        });
+
     Method {
         name: method_name,
         input_type,
@@ -443,6 +485,7 @@ fn build_method<'a>(
         server_streaming: method.server_streaming.unwrap_or(false),
         storage,
         graphql,
+        graphql_resolver,
         grpc,
         raw: method,
     }
@@ -507,10 +550,10 @@ fn convert_relation(rel: &proto_storage::RelationDef) -> Relation {
 
 fn convert_relation_type(proto_type: i32) -> RelationType {
     match proto_type {
-        0 => RelationType::HasOne,
-        1 => RelationType::HasMany,
-        2 => RelationType::BelongsTo,
-        3 => RelationType::ManyToMany,
+        1 => RelationType::BelongsTo,
+        2 => RelationType::HasOne,
+        3 => RelationType::HasMany,
+        4 => RelationType::ManyToMany,
         _ => RelationType::HasOne,
     }
 }

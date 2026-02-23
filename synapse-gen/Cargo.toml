@@ -14,8 +14,6 @@ prost-types.workspace = true
 prost-reflect.workspace = true
 thiserror.workspace = true
 once_cell.workspace = true
-heck.workspace = true
 
 [build-dependencies]
 prost-build = "0.13"
-prost-reflect-build = "0.15"

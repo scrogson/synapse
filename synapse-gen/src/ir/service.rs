@@ -21,6 +21,7 @@ pub struct Method<'a> {
     pub server_streaming: bool,
     pub storage: Option<StorageMethodOptions>,
     pub graphql: Option<GraphQLMethodOptions>,
+    pub graphql_resolver: Option<GraphQLMethodResolverOptions>,
     pub grpc: Option<GrpcMethodOptions>,
     pub raw: &'a MethodDescriptorProto,
 }

@@ -1576,12 +1576,10 @@ dependencies = [
 name = "synapse-gen"
 version = "0.1.0"
 dependencies = [
- "heck",
  "once_cell",
  "prost",
  "prost-build",
  "prost-reflect",
- "prost-reflect-build",
  "prost-types",
  "thiserror",
 ]

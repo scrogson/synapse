@@ -104,6 +104,7 @@ impl SynapseGenerator {
 
         // Build CodeGeneratorResponse
         let mut response = CodeGeneratorResponse::default();
+        response.supported_features = Some(1); // FEATURE_PROTO3_OPTIONAL
         for (_, file) in all_files {
             response.file.push(
                 prost_types::compiler::code_generator_response::File {
