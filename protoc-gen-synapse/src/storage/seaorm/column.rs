@@ -2,7 +2,7 @@
 //!
 //! This module generates the #[sea_orm(...)] attributes for entity fields.
 
-use super::options::storage::ColumnOptions;
+use synapse_gen::ir::options::ColumnOptions;
 use super::types::MappedType;
 
 /// Generated SeaORM column attributes for a field

@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-use super::options::storage::{RelationDef, RelationType};
+use synapse_gen::ir::{Relation, RelationType};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 
 /// Find the reverse relation name for a self-referential relation
@@ -17,12 +17,10 @@ use heck::{ToSnakeCase, ToUpperCamelCase};
 /// For example, if we have `parent` (belongs_to) and `replies` (has_many) both pointing
 /// to the same entity, they are a reverse pair.
 fn find_self_ref_reverse(
-    relations: &[RelationDef],
-    current_rel: &RelationDef,
+    relations: &[Relation],
+    current_rel: &Relation,
     current_entity: &str,
 ) -> Option<String> {
-    let current_type =
-        RelationType::try_from(current_rel.r#type).unwrap_or(RelationType::Unspecified);
     let is_self_ref = current_rel.related.to_snake_case() == current_entity.to_snake_case();
 
     if !is_self_ref {
@@ -39,7 +37,6 @@ fn find_self_ref_reverse(
             continue; // Skip self
         }
 
-        let rel_type = RelationType::try_from(rel.r#type).unwrap_or(RelationType::Unspecified);
         let rel_is_self_ref = rel.related.to_snake_case() == current_entity.to_snake_case();
 
         if !rel_is_self_ref {
@@ -48,7 +45,7 @@ fn find_self_ref_reverse(
 
         // Check if they are complementary types
         let is_complementary = matches!(
-            (current_type, rel_type),
+            (&current_rel.relation_type, &rel.relation_type),
             (RelationType::BelongsTo, RelationType::HasMany)
                 | (RelationType::BelongsTo, RelationType::HasOne)
                 | (RelationType::HasMany, RelationType::BelongsTo)
@@ -75,7 +72,7 @@ fn find_self_ref_reverse(
 
 /// Generate all relation fields for a message, properly handling self-referential pairs
 pub fn generate_relation_fields(
-    relations: &[RelationDef],
+    relations: &[Relation],
     current_entity: &str,
 ) -> Vec<proc_macro2::TokenStream> {
     relations
@@ -89,33 +86,31 @@ pub fn generate_relation_fields(
 
 /// Generate a relation field with optional relation_reverse for self-referential relations
 fn generate_relation_field_with_reverse(
-    rel_def: &RelationDef,
+    rel: &Relation,
     current_entity: &str,
     relation_reverse: Option<&str>,
 ) -> Option<proc_macro2::TokenStream> {
     use quote::{format_ident, quote};
 
-    if rel_def.name.is_empty() || rel_def.related.is_empty() {
+    if rel.name.is_empty() || rel.related.is_empty() {
         return None;
     }
 
-    let rel_type = RelationType::try_from(rel_def.r#type).unwrap_or(RelationType::Unspecified);
-
-    let field_name = format_ident!("{}", rel_def.name.to_snake_case());
-    let relation_enum_name = rel_def.name.to_upper_camel_case();
+    let field_name = format_ident!("{}", rel.name.to_snake_case());
+    let relation_enum_name = rel.name.to_upper_camel_case();
 
     // Check if this is a self-referential relation
-    let is_self_ref = rel_def.related.to_snake_case() == current_entity.to_snake_case();
+    let is_self_ref = rel.related.to_snake_case() == current_entity.to_snake_case();
 
     // Check if this is a cross-package relation (contains a dot like "iam.User")
-    let is_cross_package = rel_def.related.contains('.');
+    let is_cross_package = rel.related.contains('.');
 
     // Generate the target entity path
     let target_entity: syn::Type = if is_self_ref {
         syn::parse_quote!(Entity)
     } else if is_cross_package {
         // Cross-package relation: "iam.User" -> "crate::iam::entities::user::Entity"
-        let parts: Vec<&str> = rel_def.related.split('.').collect();
+        let parts: Vec<&str> = rel.related.split('.').collect();
         if parts.len() == 2 {
             let package = parts[0].to_snake_case();
             let entity = parts[1].to_snake_case();
@@ -128,7 +123,7 @@ fn generate_relation_field_with_reverse(
             // Fallback for unexpected format
             syn::parse_str(&format!(
                 "super::{}::Entity",
-                rel_def.related.to_snake_case().replace('.', "_")
+                rel.related.to_snake_case().replace('.', "_")
             ))
             .unwrap_or_else(|_| syn::parse_quote!(Entity))
         }
@@ -136,12 +131,12 @@ fn generate_relation_field_with_reverse(
         // Same package relation
         syn::parse_str(&format!(
             "super::{}::Entity",
-            rel_def.related.to_snake_case()
+            rel.related.to_snake_case()
         ))
         .unwrap_or_else(|_| syn::parse_quote!(Entity))
     };
 
-    match rel_type {
+    match rel.relation_type {
         RelationType::HasOne => {
             if is_self_ref {
                 if let Some(reverse) = relation_reverse {
@@ -163,10 +158,10 @@ fn generate_relation_field_with_reverse(
             }
         }
         RelationType::HasMany => {
-            if !rel_def.through.is_empty() {
+            if !rel.through.is_empty() {
                 // Many-to-many via junction table
                 // Convert to snake_case module name (treat as message name)
-                let via_module = rel_def.through.to_snake_case();
+                let via_module = rel.through.to_snake_case();
                 if is_self_ref {
                     if let Some(reverse) = relation_reverse {
                         Some(quote! {
@@ -205,15 +200,15 @@ fn generate_relation_field_with_reverse(
             }
         }
         RelationType::BelongsTo => {
-            let from_col = if rel_def.foreign_key.is_empty() {
-                format!("{}_id", rel_def.related.to_snake_case())
+            let from_col = if rel.foreign_key.is_empty() {
+                format!("{}_id", rel.related.to_snake_case())
             } else {
-                rel_def.foreign_key.clone()
+                rel.foreign_key.clone()
             };
-            let to_col = if rel_def.references.is_empty() {
+            let to_col = if rel.references.is_empty() {
                 "id".to_string()
             } else {
-                rel_def.references.clone()
+                rel.references.clone()
             };
 
             // belongs_to uses HasOne type in SeaORM 2.0 dense format
@@ -237,9 +232,9 @@ fn generate_relation_field_with_reverse(
             }
         }
         RelationType::ManyToMany => {
-            if !rel_def.through.is_empty() {
+            if !rel.through.is_empty() {
                 // Convert to snake_case module name (treat as message name)
-                let via_module = rel_def.through.to_snake_case();
+                let via_module = rel.through.to_snake_case();
                 if is_self_ref {
                     Some(quote! {
                         #[sea_orm(has_many, self_ref, relation_enum = #relation_enum_name, via = #via_module)]
@@ -263,7 +258,6 @@ fn generate_relation_field_with_reverse(
                 })
             }
         }
-        RelationType::Unspecified => None,
     }
 }
 
@@ -273,34 +267,43 @@ mod tests {
 
     #[test]
     fn test_generate_has_many_relation() {
-        let rel_def = RelationDef {
+        let rel = Relation {
             name: "posts".to_string(),
-            r#type: RelationType::HasMany as i32,
+            relation_type: RelationType::HasMany,
             related: "post".to_string(),
-            ..Default::default()
+            foreign_key: String::new(),
+            references: String::new(),
+            through: String::new(),
         };
-        let fields = generate_relation_fields(&[rel_def], "user");
+        let fields = generate_relation_fields(&[rel], "user");
         assert_eq!(fields.len(), 1);
     }
 
     #[test]
     fn test_generate_belongs_to_relation() {
-        let rel_def = RelationDef {
+        let rel = Relation {
             name: "author".to_string(),
-            r#type: RelationType::BelongsTo as i32,
+            relation_type: RelationType::BelongsTo,
             related: "user".to_string(),
             foreign_key: "user_id".to_string(),
             references: "id".to_string(),
-            ..Default::default()
+            through: String::new(),
         };
-        let fields = generate_relation_fields(&[rel_def], "post");
+        let fields = generate_relation_fields(&[rel], "post");
         assert_eq!(fields.len(), 1);
     }
 
     #[test]
     fn test_empty_relation_def() {
-        let rel_def = RelationDef::default();
-        let fields = generate_relation_fields(&[rel_def], "user");
+        let rel = Relation {
+            name: String::new(),
+            relation_type: RelationType::HasOne,
+            related: String::new(),
+            foreign_key: String::new(),
+            references: String::new(),
+            through: String::new(),
+        };
+        let fields = generate_relation_fields(&[rel], "user");
         assert!(fields.is_empty());
     }
 }

@@ -3,7 +3,8 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, options, package};
+use super::{options, package};
+use crate::storage::seaorm::entity::EntityGenerator;
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
 use crate::{graphql, typescript};
@@ -56,10 +57,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 
         // Generate code for entities found in imports
         for (proto_file, message) in &entity_file_map {
-            // Generate entity if has entity options
-            if let Some(generated) = entity::generate(proto_file, message)? {
-                files.push(generated);
-            }
             // Generate GraphQL Object type if has graphql options
             if let Some(generated) = graphql::generate_message(proto_file, message)? {
                 files.push(generated);
@@ -247,6 +244,22 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
             new_gen_files.extend(
                 impl_gen
                     .generate_service(&ctx, service)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+    }
+
+    // Run entity generator via synapse-gen IR
+    let entity_gen = EntityGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        for entity_ir in &package.entities {
+            new_gen_files.extend(
+                entity_gen
+                    .generate_entity(&ctx, entity_ir)
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );
         }

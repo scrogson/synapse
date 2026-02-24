@@ -723,6 +723,7 @@ pub fn get_cached_entity_options(
 }
 
 /// Look up cached column options for a given file, message name, and field number
+#[allow(dead_code)]
 pub fn get_cached_column_options(
     file_name: &str,
     msg_name: &str,
@@ -1034,12 +1035,14 @@ pub fn get_cached_graphql_method_resolver_options(
 // =============================================================================
 
 /// Parse entity options from a DescriptorProto
+#[allow(dead_code)]
 pub fn parse_entity_options(desc: &DescriptorProto) -> Option<storage::EntityOptions> {
     let opts = desc.options.as_ref()?;
     parse_entity_options_from_uninterpreted(&opts.uninterpreted_option)
 }
 
 /// Parse column options from a FieldDescriptorProto
+#[allow(dead_code)]
 pub fn parse_column_options(field: &FieldDescriptorProto) -> Option<storage::ColumnOptions> {
     let opts = field.options.as_ref()?;
     parse_column_options_from_uninterpreted(&opts.uninterpreted_option)
@@ -2036,6 +2039,7 @@ fn get_subfield_name(opt: &UninterpretedOption) -> Option<&str> {
 }
 
 /// Parse EntityOptions from uninterpreted options
+#[allow(dead_code)]
 fn parse_entity_options_from_uninterpreted(
     uninterpreted: &[UninterpretedOption],
 ) -> Option<storage::EntityOptions> {
@@ -2057,6 +2061,7 @@ fn parse_entity_options_from_uninterpreted(
 }
 
 /// Parse ColumnOptions from uninterpreted options
+#[allow(dead_code)]
 fn parse_column_options_from_uninterpreted(
     uninterpreted: &[UninterpretedOption],
 ) -> Option<storage::ColumnOptions> {
