@@ -1,6 +1,6 @@
 //! Build Schema IR from decoded CodeGeneratorRequest and extracted options.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use prost_types::compiler::CodeGeneratorRequest;
 use prost_types::{
@@ -23,12 +23,24 @@ pub fn build_schema<'a>(
 ) -> Schema<'a> {
     let mut package_map: HashMap<String, Package<'a>> = HashMap::new();
 
+    // Compute which packages have at least one file in file_to_generate.
+    // We include ALL files from these packages so that imported files
+    // (e.g. entities.proto imported by services.proto) are processed too.
+    let packages_to_generate: HashSet<String> = request
+        .proto_file
+        .iter()
+        .filter(|f| {
+            let file_name = f.name.clone().unwrap_or_default();
+            request.file_to_generate.contains(&file_name)
+        })
+        .map(|f| f.package.clone().unwrap_or_default())
+        .collect();
+
     for file in &request.proto_file {
         let pkg_name = file.package.clone().unwrap_or_default();
         let file_name = file.name.clone().unwrap_or_default();
 
-        let should_generate = request.file_to_generate.contains(&file_name);
-        if !should_generate {
+        if !packages_to_generate.contains(&pkg_name) {
             continue;
         }
 
