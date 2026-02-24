@@ -19,7 +19,7 @@ message User {
       foreign_key: "author_id"
     }]
   };
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
 
   int64 id = 1 [(synapse.storage.column).primary_key = true];
   string email = 2 [(synapse.storage.column).unique = true];
@@ -45,6 +45,7 @@ Synapse generates:
 | **Database** | SeaORM entities, migrations, relation definitions |
 | **gRPC** | Tonic service traits, request/response types, server implementations |
 | **GraphQL** | async-graphql types, Query/Mutation resolvers, Relay connections, DataLoaders |
+| **TypeScript** | `.d.ts` contracts for custom Deno resolvers |
 | **Filters** | Type-safe filter inputs (`UserFilter`, `PostFilter`) with `eq`, `neq`, `gt`, `in`, etc. |
 | **Pagination** | Relay-compliant cursor pagination (`edges`, `nodes`, `pageInfo`) |
 
@@ -55,31 +56,40 @@ Synapse generates:
 │                     Proto Definitions                       │
 │                   (with synapse.* options)                  │
 └─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    protoc-gen-synapse                       │
-│                                                             │
-│  Parses proto files, reads synapse.* extensions,            │
-│  generates Rust code for all layers                         │
-└─────────────────────────────────────────────────────────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-    ┌──────────┐        ┌──────────┐        ┌──────────┐
-    │  SeaORM  │        │   gRPC   │        │ GraphQL  │
-    │ Entities │        │ Services │        │ Resolvers│
-    └──────────┘        └──────────┘        └──────────┘
-          │                   │                   │
-          └───────────────────┼───────────────────┘
-                              ▼
-                    ┌──────────────────┐
-                    │  Your Application │
-                    │                  │
-                    │  - gRPC Server   │
-                    │  - GraphQL API   │
-                    │  - PostgreSQL    │
-                    └──────────────────┘
+          │                                       │
+          ▼                                       ▼
+┌───────────────────────┐          ┌──────────────────────────┐
+│   synapse-proto-gen   │          │     protoc-gen-synapse    │
+│                       │          │                          │
+│  Generates auxiliary  │          │  Main protoc plugin      │
+│  proto types (filters,│          │  (uses synapse-gen IR)   │
+│  connections, etc.)   │          │                          │
+└───────────────────────┘          └──────────────────────────┘
+                                              │
+                          ┌───────────────────┼──────────────────┐
+                          ▼                   ▼                  ▼
+                   ┌──────────┐        ┌──────────┐       ┌──────────┐
+                   │  SeaORM  │        │   gRPC   │       │ GraphQL  │
+                   │ Entities │        │ Services │       │ Resolvers│
+                   └──────────┘        └──────────┘       └──────────┘
+                          │                   │                  │
+                          └───────────────────┼──────────────────┘
+                                              ▼
+                                   ┌──────────────────┐
+                                   │  Your Application │
+                                   │                  │
+                                   │  - gRPC Server   │
+                                   │  - GraphQL API   │
+                                   │  - PostgreSQL    │
+                                   │  - Deno Resolvers│
+                                   └──────────────────┘
+
+Crate Responsibilities:
+
+  synapse-gen          IR types, ParsedSchema, CodeGenerator trait
+  protoc-gen-synapse   Protoc plugin composing all generators
+  synapse-deno         Deno runtime for custom TypeScript resolvers
+  synapse-proto-gen    CLI to generate filter/connection proto types
 ```
 
 ## Key Features
@@ -224,6 +234,75 @@ impl UserServiceStorage for MyCustomStorage {
 }
 ```
 
+### Custom Resolvers (Deno)
+
+Define virtual/computed fields that exist only in GraphQL, resolved at runtime by TypeScript functions in a secure Deno sandbox:
+
+```protobuf
+message User {
+  option (synapse.graphql.resolver) = {
+    deno: { module: "resolvers/user.ts" }
+    fields: [
+      {
+        name: "displayName"
+        type: "String!"
+        description: "User's display name (name or email)"
+      },
+      {
+        name: "postCount"
+        type: "Int!"
+        arguments: [{ name: "published", type: "Boolean" }]
+      }
+    ]
+  };
+}
+```
+
+Synapse generates type-safe `.d.ts` contracts and you implement the resolvers:
+
+```typescript
+// resolvers/user.ts
+import type { UserResolverModule } from "./generated";
+
+export const displayName: UserResolverModule["displayName"] = (user) => {
+  return user.name || user.email.split("@")[0];
+};
+
+export const postCount: UserResolverModule["postCount"] = async (user, args, ctx) => {
+  const posts = await ctx.dataLoaders.postsByAuthor.load(user.id);
+  if (args.published !== undefined) {
+    return posts.filter((p) => p.published === args.published).length;
+  }
+  return posts.length;
+};
+```
+
+Resolvers work at three levels:
+- **Message-level** (`synapse.graphql.resolver`): Virtual/computed fields
+- **Field-level** (`synapse.graphql.field_resolver`): Override existing field resolution
+- **Method-level** (`synapse.graphql.method_resolver`): Custom RPC implementations
+
+The Deno sandbox uses deny-by-default permissions—network, filesystem, and environment access must be explicitly granted per-resolver.
+
+### Context Injection
+
+Auto-populate request fields from server-side context, preventing client impersonation:
+
+```protobuf
+message CreateAuthorRequest {
+  // Populated server-side from authenticated user — not exposed in GraphQL input
+  int64 user_id = 1 [(synapse.graphql.field).from_context = {
+    path: "current_user.id"
+    required: true
+  }];
+
+  string pen_name = 2;
+  optional string bio = 3;
+}
+```
+
+When `from_context` is set, the field is excluded from the GraphQL input type and injected server-side from the request context. If `required: true`, the request fails with `UNAUTHENTICATED` when the value is missing.
+
 ## Quick Start
 
 ### 1. Define Your Schema
@@ -239,7 +318,7 @@ import "synapse/storage/options.proto";
 import "synapse/graphql/options.proto";
 
 message User {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "users"
     relations: [{
@@ -257,7 +336,7 @@ message User {
 }
 
 message Post {
-  option (synapse.graphql.message) = { node: true };
+  option (synapse.graphql.type) = { node: true };
   option (synapse.storage.entity) = {
     table_name: "posts"
     relations: [{
@@ -297,23 +376,24 @@ service UserService {
   };
 
   rpc GetUser(GetUserRequest) returns (GetUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "user"
-      operation: "Query"
+      output_type: "User"
+      output_field: "user"
     };
   }
 
   rpc ListUsers(ListUsersRequest) returns (UserConnection) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.query) = {
       name: "users"
-      operation: "Query"
     };
   }
 
   rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
-    option (synapse.graphql.method) = {
+    option (synapse.graphql.mutation) = {
       name: "createUser"
-      operation: "Mutation"
+      output_type: "User"
+      output_field: "user"
     };
   }
 }
@@ -418,14 +498,14 @@ relations: [
 ]
 ```
 
-### `synapse.graphql.message`
+### `synapse.graphql.type`
 
 ```protobuf
-option (synapse.graphql.message) = {
+option (synapse.graphql.type) = {
   skip: false           // Skip GraphQL generation
   node: true            // Implement Relay Node interface
-  type_name: "User"     // Override GraphQL type name
-  input_type: false     // Generate as InputObject instead
+  name: "User"          // Override GraphQL type name
+  input: false          // Generate as InputObject instead
 };
 ```
 
@@ -436,18 +516,81 @@ int64 author_id = 5 [(synapse.graphql.field) = {
   skip: true            // Hide from GraphQL schema
   name: "authorId"      // Override field name
   deprecated: { reason: "Use author instead" }
+  from_context: {       // Populate from request context (see Context Injection)
+    path: "current_user.id"
+    required: true
+  }
 }];
 ```
 
-### `synapse.graphql.method`
+### `synapse.graphql.query`
 
 ```protobuf
 rpc GetUser(...) returns (...) {
-  option (synapse.graphql.method) = {
-    name: "user"              // GraphQL field name
-    operation: "Query"        // Query, Mutation, or Subscription
-    description: "Get user"   // Field description
+  option (synapse.graphql.query) = {
+    name: "user"              // GraphQL field name on Query type
+    output_type: "User"       // Unwrap response to this type
+    output_field: "user"      // Field path to extract from response
     skip: false               // Skip this method
+  };
+}
+```
+
+### `synapse.graphql.mutation`
+
+```protobuf
+rpc CreateUser(...) returns (...) {
+  option (synapse.graphql.mutation) = {
+    name: "createUser"        // GraphQL field name on Mutation type
+    input_type: "CreateUserInput"  // Override input type name
+    output_type: "User"       // Unwrap response to this type
+    output_field: "user"      // Field path to extract from response
+    skip: false               // Skip this method
+  };
+}
+```
+
+### `synapse.graphql.resolver`
+
+```protobuf
+option (synapse.graphql.resolver) = {
+  deno: { module: "resolvers/user.ts" }   // Deno module for all virtual fields
+  fields: [
+    {
+      name: "displayName"                 // GraphQL field name
+      type: "String!"                     // GraphQL type
+      description: "User's display name"  // Field description
+      arguments: [                        // Optional field arguments
+        { name: "format", type: "String", default_value: "\"short\"" }
+      ]
+      deno: { function: "customFn" }      // Override function name per-field
+    }
+  ]
+};
+```
+
+### `synapse.graphql.field_resolver`
+
+```protobuf
+string email = 2 [(synapse.graphql.field_resolver) = {
+  deno: {
+    module: "resolvers/user.ts"
+    function: "maskEmail"     // Function to transform this field's value
+  }
+}];
+```
+
+### `synapse.graphql.method_resolver`
+
+```protobuf
+rpc SearchPosts(...) returns (...) {
+  option (synapse.graphql.method_resolver) = {
+    deno: {
+      module: "resolvers/search.ts"
+      function: "searchPosts"
+      timeout_ms: 10000
+      permissions: { net: ["search-api.internal"] }
+    }
   };
 }
 ```
@@ -476,37 +619,87 @@ option (synapse.validate.message) = {
 string email = 1 [(synapse.validate.field).rules = {
   required: true                  // Field must be non-empty (strings) or Some (optionals)
   email: true                     // Must contain @ (basic email check)
-  length: { min: 1, max: 100 }    // String length constraints
-  pattern: "^[a-z0-9-]+$"         // Regex pattern match
+  length: { min: 1, max: 100 }   // String length constraints
+  pattern: "^[a-z0-9-]+$"        // Regex pattern match
 }];
 ```
+
+## Building Custom Generators
+
+The `synapse-gen` crate provides the `CodeGenerator` trait for building your own code generators on top of the Synapse IR:
+
+```rust
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError, SynapseGenerator};
+use synapse_gen::ir::Entity;
+
+struct MyGenerator;
+
+impl CodeGenerator for MyGenerator {
+    fn name(&self) -> &str { "my-generator" }
+
+    fn generate_entity(
+        &self,
+        ctx: &GeneratorContext,
+        entity: &Entity,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        // Access entity fields, relations, storage options, etc.
+        let table = &entity.storage.as_ref().unwrap().table_name;
+        Ok(vec![GeneratedFile {
+            path: format!("{}/{}.rs", ctx.package.name, entity.name),
+            content: format!("// Generated for table: {}", table),
+        }])
+    }
+}
+
+// Compose generators into a protoc plugin
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    SynapseGenerator::new()
+        .add(MyGenerator)
+        .run()
+}
+```
+
+The trait provides callbacks for each IR element:
+- `generate_entity()` — messages with `synapse.storage.entity`
+- `generate_service()` — proto services
+- `generate_enum()` — proto enums
+- `generate_message()` — non-entity messages (request/response types)
+- `finalize_package()` — package-level rollup files (e.g., `mod.rs`)
+- `finalize()` — top-level files after all packages
 
 ## Project Structure
 
 ```
-your-project/
-├── proto/
-│   ├── iam/
-│   │   ├── entities.proto       # IAM entity definitions (User, Org, Team)
-│   │   └── services.proto       # IAM services and request/response types
-│   └── blog/
-│       ├── entities.proto       # Blog entity definitions (Author, Post)
-│       └── services.proto       # Blog services and request/response types
-├── src/
-│   ├── generated/               # Generated Rust code
-│   │   ├── iam/
-│   │   │   ├── mod.rs           # Proto types + re-exports
-│   │   │   ├── entities/        # SeaORM entity models
-│   │   │   ├── storage/         # Storage traits, defaults, SeaORM impl
-│   │   │   ├── grpc/            # gRPC service implementations
-│   │   │   ├── graphql/         # GraphQL types, resolvers, DataLoaders
-│   │   │   ├── create_user.rs   # Validated domain type
-│   │   │   └── update_user.rs   # Validated domain type
-│   │   └── blog/
-│   │       └── ...              # Same structure
-│   └── main.rs
-├── build.rs
-└── Cargo.toml
+synapse/
+├── synapse-gen/                # IR framework & CodeGenerator trait
+│   └── src/
+│       ├── ir/                 # IR types (Entity, Service, Field, etc.)
+│       ├── parser/             # ParsedSchema (prost-reflect extension parsing)
+│       ├── builder.rs          # SynapseGenerator protoc plugin builder
+│       └── generator.rs        # CodeGenerator trait definition
+├── protoc-gen-synapse/         # Main protoc plugin
+│   └── src/
+│       ├── storage/            # SeaORM entity, trait, defaults generation
+│       ├── graphql/            # GraphQL schema + resolver generation
+│       ├── grpc/               # gRPC service generation
+│       ├── typescript/         # TypeScript .d.ts contract generation
+│       └── validate/           # Validated domain type generation
+├── synapse-deno/               # Deno runtime for custom resolvers
+│   └── src/
+│       ├── resolver.rs         # DenoResolver, DenoConfig, DenoPermissions
+│       └── runtime.rs          # V8 runtime management
+├── synapse-proto-gen/          # CLI: generate auxiliary proto types
+│   └── src/                    # Generates filters, connections, CRUD messages
+├── proto/synapse/              # Synapse proto option definitions
+│   ├── storage/options.proto   # Storage layer options
+│   ├── graphql/
+│   │   ├── options.proto       # GraphQL type/field/query/mutation options
+│   │   ├── resolver.proto      # Custom resolver options (Deno)
+│   │   └── context.proto       # Context injection definitions
+│   ├── grpc/options.proto      # gRPC options
+│   ├── validate/options.proto  # Validation options
+│   └── relay/types.proto       # Relay pagination types
+└── examples/unified/           # Complete working example
 ```
 
 ## Example
@@ -515,6 +708,8 @@ See the [`examples/unified`](examples/unified) directory for a complete working 
 
 - **Multi-service architecture**: IAM (Users, Organizations, Teams) + Blog (Authors, Posts)
 - **Cross-service relations**: Blog Author belongs_to IAM User
+- **Custom resolvers**: Virtual fields (displayName) via Deno TypeScript
+- **Context injection**: `from_context` for server-side user ID population
 - **Validated domain types**: Request validation with `TryFrom` conversions
 - **Partial override pattern**: Override specific storage methods while using defaults for others
 - **Multiple deployment modes**: Monolith, microservices, or gateway-only
@@ -541,7 +736,7 @@ just demo  # Starts IAM, Blog, and Gateway separately
 ## Design Principles
 
 1. **Proto is the source of truth** - All schema information lives in `.proto` files
-2. **Generate everything** - Database, gRPC, GraphQL from one definition
+2. **Generate everything** - Database, gRPC, GraphQL, TypeScript from one definition
 3. **Type safety end-to-end** - Compile-time guarantees across all layers
 4. **Performance by default** - DataLoaders, connection pooling, efficient queries
 5. **Relay compliance** - Cursor pagination, Node interface, global IDs
@@ -560,6 +755,10 @@ just demo  # Starts IAM, Blog, and Gateway separately
 | Validated domain types | ✅ Complete |
 | Partial override pattern | ✅ Complete |
 | Cross-package relations | ✅ Complete |
+| Custom resolvers (Deno) | ✅ Complete |
+| TypeScript contracts | ✅ Complete |
+| Context injection | ✅ Complete |
+| Generator framework (`synapse-gen`) | ✅ Complete |
 | Elixir backend (Phoenix, Ecto, Absinthe, gRPC) | 🔮 Planned |
 
 ## License
