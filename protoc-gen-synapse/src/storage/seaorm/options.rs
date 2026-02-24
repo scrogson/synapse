@@ -860,6 +860,7 @@ pub fn get_cached_grpc_response_options(
 }
 
 /// Look up cached validate field options for a given file, message name, and field number
+#[allow(dead_code)]
 pub fn get_cached_validate_field_options(
     file_name: &str,
     msg_name: &str,

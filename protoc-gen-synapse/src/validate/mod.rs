@@ -8,40 +8,60 @@
 //! - ValidationError with `into_errors()` for rich error responses
 //! - `TryFrom<ProtoMessage>` implementation with validation
 
-use crate::error::GeneratorError;
-use crate::options::synapse::validate;
-use crate::storage::seaorm::options::{
-    get_cached_validate_field_options, get_cached_validate_message_options,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{FieldDescriptorProto, FileDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::{ValidateMessageOptions, ValidationRules};
+use synapse_gen::ir::{Entity, Field, FieldType, Message};
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
 
-/// Generate domain types for messages with validate options
-pub fn generate(
-    file: &FileDescriptorProto,
-    message: &prost_types::DescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let message_name = message.name.as_deref().unwrap_or("");
+/// Generator that produces validated domain types from synapse.validate annotations.
+pub struct ValidateGenerator;
 
-    // Check if this message has validate options with generate_conversion
-    let validate_options = match get_cached_validate_message_options(file_name, message_name) {
-        Some(opts) if opts.generate_conversion && !opts.name.is_empty() => opts,
-        _ => return Ok(None),
-    };
+impl CodeGenerator for ValidateGenerator {
+    fn name(&self) -> &str {
+        "validate"
+    }
 
-    let domain_name = &validate_options.name;
-    let proto_name = message_name;
+    fn generate_message(
+        &self,
+        ctx: &GeneratorContext,
+        message: &Message,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let opts = match &message.validate {
+            Some(opts) if opts.generate_conversion && !opts.name.is_empty() => opts,
+            _ => return Ok(vec![]),
+        };
+        generate_domain_type(ctx, &opts.name, &message.name, &message.fields, opts)
+    }
 
+    fn generate_entity(
+        &self,
+        ctx: &GeneratorContext,
+        entity: &Entity,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let opts = match &entity.validate {
+            Some(opts) if opts.generate_conversion && !opts.name.is_empty() => opts,
+            _ => return Ok(vec![]),
+        };
+        generate_domain_type(ctx, &opts.name, &entity.name, &entity.fields, opts)
+    }
+}
+
+/// Shared implementation that generates a domain type from fields and validate options.
+fn generate_domain_type(
+    ctx: &GeneratorContext,
+    domain_name: &str,
+    proto_name: &str,
+    fields: &[Field],
+    _opts: &ValidateMessageOptions,
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
     // Generate the output filename
     let module_name = domain_name.to_snake_case();
     let output_filename = format!(
         "{}/{}.rs",
-        file.package.as_deref().unwrap_or("").replace('.', "/"),
-        module_name
+        ctx.package.name.replace('.', "/"),
+        module_name,
     );
 
     // Build identifiers
@@ -52,15 +72,12 @@ pub fn generate(
 
     // Generate field definitions and validation
     let (field_defs, field_validations, field_assignments) =
-        generate_fields(file_name, message_name, &message.field, &field_error_ident)?;
+        generate_fields(fields, &field_error_ident);
 
     // Build doc comments
     let module_doc = format!("Domain type {} generated from {}", domain_name, proto_name);
     let struct_doc = format!("Validated domain type for {}", proto_name);
     let error_doc = format!("Validation error for {} conversion", domain_name);
-
-    // Generate field error type name
-    let field_error_ident = format_ident!("{}FieldError", domain_name);
 
     let code = quote! {
         #![doc = #module_doc]
@@ -152,52 +169,47 @@ pub fn generate(
         Err(_) => content,
     };
 
-    Ok(Some(File {
-        name: Some(output_filename),
-        content: Some(formatted),
-        ..Default::default()
-    }))
+    Ok(vec![GeneratedFile {
+        path: output_filename,
+        content: formatted,
+    }])
 }
 
 /// Generate field definitions, validations, and assignments
 fn generate_fields(
-    file_name: &str,
-    message_name: &str,
-    fields: &[FieldDescriptorProto],
+    fields: &[Field],
     field_error_ident: &proc_macro2::Ident,
-) -> Result<(Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>), GeneratorError> {
+) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
     let mut field_defs = Vec::new();
     let mut field_validations = Vec::new();
     let mut field_assignments = Vec::new();
 
     for field in fields {
-        let field_name = field.name.as_deref().unwrap_or("");
-        let field_number = field.number.unwrap_or(0);
-        let field_ident = format_ident!("{}", field_name.to_snake_case());
+        let field_ident = format_ident!("{}", field.name.to_snake_case());
 
         // Look up field-level validate options
-        let field_opts = get_cached_validate_field_options(file_name, message_name, field_number);
+        let field_opts = field.validation.as_ref();
 
         // Skip this field if marked as skip
-        if field_opts.as_ref().is_some_and(|opts| opts.skip) {
+        if field_opts.is_some_and(|opts| opts.skip) {
             continue;
         }
 
         // Check if field has custom type
-        let custom_type = field_opts.as_ref().and_then(|opts| {
-            if opts.r#type.is_empty() {
+        let custom_type = field_opts.and_then(|opts| {
+            if opts.field_type.is_empty() {
                 None
             } else {
-                Some(opts.r#type.clone())
+                Some(opts.field_type.clone())
             }
         });
 
-        // Determine Rust type based on proto type or custom type
+        // Determine Rust type based on IR field type or custom type
         let rust_type = if let Some(ref type_name) = custom_type {
             let type_ident = format_ident!("{}", type_name);
             quote! { #type_ident }
         } else {
-            proto_type_to_rust(field)
+            field_type_to_rust_token(&field.field_type, field.nullable, field.repeated)
         };
 
         // Generate field definition
@@ -206,9 +218,15 @@ fn generate_fields(
         });
 
         // Generate validation code based on field options
-        if let Some(ref opts) = field_opts {
+        if let Some(opts) = field_opts {
             if let Some(ref rules) = opts.rules {
-                let validation = generate_field_validation(field_name, &field_ident, field, rules, field_error_ident);
+                let validation = generate_field_validation(
+                    &field.name,
+                    &field_ident,
+                    field,
+                    rules,
+                    field_error_ident,
+                );
                 if !validation.is_empty() {
                     field_validations.push(validation);
                 }
@@ -218,7 +236,7 @@ fn generate_fields(
         // Generate field assignment (with type conversion if custom type)
         if custom_type.is_some() {
             let type_ident = format_ident!("{}", custom_type.unwrap());
-            let field_name_str = field_name;
+            let field_name_str = &field.name;
             field_assignments.push(quote! {
                 #field_ident: #type_ident::from_str(&request.#field_ident)
                     .map_err(|e| errors.push(#field_error_ident {
@@ -235,23 +253,21 @@ fn generate_fields(
         }
     }
 
-    Ok((field_defs, field_validations, field_assignments))
+    (field_defs, field_validations, field_assignments)
 }
 
 /// Generate validation code for a field based on its rules
 fn generate_field_validation(
     field_name: &str,
     field_ident: &proc_macro2::Ident,
-    field: &FieldDescriptorProto,
-    rules: &validate::Rules,
+    field: &Field,
+    rules: &ValidationRules,
     field_error_ident: &proc_macro2::Ident,
 ) -> TokenStream {
-    use prost_types::field_descriptor_proto::Type;
-
     let mut validations = Vec::new();
-    let is_optional = field.proto3_optional.unwrap_or(false);
-    let is_string = matches!(field.r#type(), Type::String);
-    let is_bytes = matches!(field.r#type(), Type::Bytes);
+    let is_optional = field.nullable;
+    let is_string = matches!(field.field_type, FieldType::String);
+    let is_bytes = matches!(field.field_type, FieldType::Bytes);
 
     // Required validation
     if rules.required {
@@ -436,54 +452,41 @@ fn generate_field_validation(
     }
 }
 
-/// Convert proto field type to Rust type token
-fn proto_type_to_rust(field: &FieldDescriptorProto) -> TokenStream {
-    use prost_types::field_descriptor_proto::Type;
-
-    let is_optional = field.proto3_optional.unwrap_or(false);
-    let is_repeated = field.label == Some(3); // LABEL_REPEATED
-
-    let base_type = match field.r#type() {
-        Type::Double => quote! { f64 },
-        Type::Float => quote! { f32 },
-        Type::Int64 | Type::Sfixed64 | Type::Sint64 => quote! { i64 },
-        Type::Uint64 | Type::Fixed64 => quote! { u64 },
-        Type::Int32 | Type::Sfixed32 | Type::Sint32 => quote! { i32 },
-        Type::Uint32 | Type::Fixed32 => quote! { u32 },
-        Type::Bool => quote! { bool },
-        Type::String => quote! { String },
-        Type::Bytes => quote! { Vec<u8> },
-        Type::Message => {
-            // Get the message type name
-            let type_name = field.type_name.as_deref().unwrap_or("");
-            let type_ident = format_ident!(
-                "{}",
-                type_name
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(type_name)
-                    .to_upper_camel_case()
-            );
-            quote! { #type_ident }
+/// Convert an IR `FieldType` to a Rust type `TokenStream`, wrapping in
+/// `Option<..>` when nullable and `Vec<..>` when repeated.
+fn field_type_to_rust_token(ft: &FieldType, nullable: bool, repeated: bool) -> TokenStream {
+    let base_type = match ft {
+        FieldType::Double => quote! { f64 },
+        FieldType::Float => quote! { f32 },
+        FieldType::Int64 | FieldType::SFixed64 | FieldType::SInt64 => quote! { i64 },
+        FieldType::UInt64 | FieldType::Fixed64 => quote! { u64 },
+        FieldType::Int32 | FieldType::SFixed32 | FieldType::SInt32 => quote! { i32 },
+        FieldType::UInt32 | FieldType::Fixed32 => quote! { u32 },
+        FieldType::Bool => quote! { bool },
+        FieldType::String => quote! { String },
+        FieldType::Bytes => quote! { Vec<u8> },
+        FieldType::Timestamp => {
+            let ident = format_ident!("Timestamp");
+            quote! { #ident }
         }
-        Type::Enum => {
-            let type_name = field.type_name.as_deref().unwrap_or("");
-            let type_ident = format_ident!(
-                "{}",
-                type_name
-                    .rsplit('.')
-                    .next()
-                    .unwrap_or(type_name)
-                    .to_upper_camel_case()
-            );
-            quote! { #type_ident }
+        FieldType::Duration => {
+            let ident = format_ident!("Duration");
+            quote! { #ident }
         }
-        _ => quote! { () },
+        FieldType::Struct => {
+            let ident = format_ident!("Value");
+            quote! { #ident }
+        }
+        FieldType::Message(name) | FieldType::Enum(name) => {
+            let last_segment = name.rsplit('.').next().unwrap_or(name);
+            let ident = format_ident!("{}", last_segment.to_upper_camel_case());
+            quote! { #ident }
+        }
     };
 
-    if is_repeated {
+    if repeated {
         quote! { Vec<#base_type> }
-    } else if is_optional {
+    } else if nullable {
         quote! { Option<#base_type> }
     } else {
         base_type

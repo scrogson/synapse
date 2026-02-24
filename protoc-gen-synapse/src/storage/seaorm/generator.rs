@@ -6,7 +6,9 @@
 use super::{entity, enum_gen, implementation, options, package};
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
-use crate::{graphql, grpc, typescript, validate};
+use crate::{graphql, grpc, typescript};
+use crate::validate::ValidateGenerator;
+use synapse_gen::{CodeGenerator, GeneratorContext, ParsedSchema};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 
@@ -54,10 +56,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             if let Some(generated) = entity::generate(proto_file, message)? {
                 files.push(generated);
             }
-            // Generate domain type if has validate options with generate_conversion
-            if let Some(generated) = validate::generate(proto_file, message)? {
-                files.push(generated);
-            }
             // Generate GraphQL Object type if has graphql options
             if let Some(generated) = graphql::generate_message(proto_file, message)? {
                 files.push(generated);
@@ -79,10 +77,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             // Skip if already processed as entity
             if get_cached_entity_options(file_name, msg_name).is_some() {
                 continue;
-            }
-            // Generate domain type if has validate options with generate_conversion
-            if let Some(generated) = validate::generate(file_descriptor, message)? {
-                files.push(generated);
             }
             // Generate GraphQL input types for request messages
             if let Some(generated) = graphql::generate_message(file_descriptor, message)? {
@@ -177,14 +171,57 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 /// Generate SeaORM entities from raw protobuf bytes
 ///
 /// This entry point preserves extension data by using prost-reflect for decoding.
+/// It runs both the new synapse-gen-based generators (validate) and the legacy
+/// generators (entity, graphql, grpc, etc.) and merges their outputs.
 pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, GeneratorError> {
-    // Pre-process bytes to extract extension data using prost-reflect
+    // Parse with synapse-gen for new generators (validate)
+    let parsed = ParsedSchema::parse(bytes)
+        .map_err(|e| GeneratorError::DecodeError(e.to_string()))?;
+
+    // Pre-process bytes to extract extension data for legacy generators
     options::preprocess_request_bytes(bytes).map_err(GeneratorError::DecodeError)?;
 
-    // Now decode with prost (extension data is cached)
+    // Decode with prost for legacy generators
     let request = CodeGeneratorRequest::decode(bytes)
         .map_err(|e| GeneratorError::DecodeError(e.to_string()))?;
 
-    // Generate using the regular path (which will use cached options)
-    generate(request)
+    // Run new generators via synapse-gen IR
+    let schema = parsed.schema();
+    let validate_gen = ValidateGenerator;
+    let mut validate_files = Vec::new();
+
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        for message in &package.messages {
+            validate_files.extend(
+                validate_gen
+                    .generate_message(&ctx, message)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+        for entity in &package.entities {
+            validate_files.extend(
+                validate_gen
+                    .generate_entity(&ctx, entity)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+    }
+
+    // Run legacy generators
+    let mut response = generate(request)?;
+
+    // Merge validate files into the response
+    for f in validate_files {
+        response.file.push(prost_types::compiler::code_generator_response::File {
+            name: Some(f.path),
+            content: Some(f.content),
+            ..Default::default()
+        });
+    }
+
+    Ok(response)
 }
