@@ -5,188 +5,174 @@
 //! and handle request validation and error conversion.
 
 use super::errors::generate_error_types;
-use crate::storage::seaorm::options::{
-    get_cached_grpc_method_options, get_cached_grpc_response_options,
-    get_cached_grpc_service_options, get_cached_validate_message_options,
-};
-use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{FileDescriptorProto, MethodDescriptorProto, ServiceDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::{GrpcResponseOptions, ValidateMessageOptions};
+use synapse_gen::ir::Service;
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
 
-/// Generate a gRPC service implementation from a protobuf service
-pub fn generate(
-    file: &FileDescriptorProto,
-    service: &ServiceDescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let service_name = service.name.as_deref().unwrap_or("");
+/// Generator that produces Tonic gRPC service implementations.
+pub struct GrpcGenerator;
 
-    // Check if this service has gRPC options
-    let grpc_options = match get_cached_grpc_service_options(file_name, service_name) {
-        Some(opts) => opts,
-        None => return Ok(None), // No gRPC options, skip this service
-    };
-
-    // Skip if explicitly marked
-    if grpc_options.skip {
-        return Ok(None);
+impl CodeGenerator for GrpcGenerator {
+    fn name(&self) -> &str {
+        "grpc"
     }
 
-    // Determine struct name
-    let struct_name = if grpc_options.struct_name.is_empty() {
-        format!("{}GrpcService", service_name)
-    } else {
-        grpc_options.struct_name.clone()
-    };
+    fn generate_service(
+        &self,
+        ctx: &GeneratorContext,
+        service: &Service,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let grpc_options = match &service.grpc {
+            Some(opts) if !opts.skip => opts,
+            _ => return Ok(vec![]),
+        };
 
-    // Determine storage trait name
-    let storage_trait = if grpc_options.storage_trait.is_empty() {
-        format!("{}Storage", service_name)
-    } else {
-        grpc_options.storage_trait.clone()
-    };
+        let service_name = &service.name;
 
-    // Generate the output filename (in grpc/ subdirectory)
-    let module_name = service_name.to_snake_case();
-    let output_filename = format!(
-        "{}/grpc/{}.rs",
-        file.package.as_deref().unwrap_or("").replace('.', "/"),
-        module_name
-    );
+        // Determine struct name
+        let struct_name = if grpc_options.struct_name.is_empty() {
+            format!("{}GrpcService", service_name)
+        } else {
+            grpc_options.struct_name.clone()
+        };
 
-    // Generate trait methods
-    let methods = generate_service_methods(file_name, service_name, &service.method)?;
+        // Determine storage trait name
+        let storage_trait = if grpc_options.storage_trait.is_empty() {
+            format!("{}Storage", service_name)
+        } else {
+            grpc_options.storage_trait.clone()
+        };
 
-    // Build identifiers
-    let struct_ident = format_ident!("{}", struct_name);
-    let storage_trait_ident = format_ident!("{}", storage_trait);
+        // Generate the output filename (in grpc/ subdirectory)
+        let module_name = service_name.to_snake_case();
+        let output_filename = format!(
+            "{}/grpc/{}.rs",
+            ctx.package.name.replace('.', "/"),
+            module_name
+        );
 
-    // Build the storage trait module name (snake_case of trait name)
-    let storage_trait_module = format!("{}_storage", service_name.to_snake_case());
-    let storage_trait_module_ident = format_ident!("{}", storage_trait_module);
+        // Generate trait methods
+        let methods = generate_service_methods(ctx, service)?;
 
-    // Build the tonic service trait name (from proto service name)
-    // e.g., UserService -> user_service_server::UserService
-    let service_module = format!("{}_server", service_name.to_snake_case());
-    let service_module_ident = format_ident!("{}", service_module);
-    let service_trait_ident = format_ident!("{}", service_name);
+        // Build identifiers
+        let struct_ident = format_ident!("{}", struct_name);
+        let storage_trait_ident = format_ident!("{}", storage_trait);
 
-    // Build doc comments
-    let module_doc = format!("gRPC service implementation for {}", service_name);
-    let struct_doc = format!(
-        "gRPC service wrapper for {} that delegates to {}",
-        service_name, storage_trait
-    );
+        // Build the storage trait module name (snake_case of trait name)
+        let storage_trait_module = format!("{}_storage", service_name.to_snake_case());
+        let storage_trait_module_ident = format_ident!("{}", storage_trait_module);
 
-    // Generate error types
-    let error_types = generate_error_types();
+        // Build the tonic service trait name (from proto service name)
+        let service_module = format!("{}_server", service_name.to_snake_case());
+        let service_module_ident = format_ident!("{}", service_module);
+        let service_trait_ident = format_ident!("{}", service_name);
 
-    let code = quote! {
-        #![doc = #module_doc]
-        //!
-        //! Generated by protoc-gen-synapse from protobuf service definition.
-        //! @generated
+        // Build doc comments
+        let module_doc = format!("gRPC service implementation for {}", service_name);
+        let struct_doc = format!(
+            "gRPC service wrapper for {} that delegates to {}",
+            service_name, storage_trait
+        );
 
-        #![allow(missing_docs)]
-        #![allow(unused_imports)]
+        // Generate error types
+        let error_types = generate_error_types();
 
-        use super::super::prelude::*;
-        use super::super::storage::#storage_trait_module_ident::{#storage_trait_ident, StorageError};
-        use tonic::{Request, Response, Status};
+        let code = quote! {
+            #![doc = #module_doc]
+            //!
+            //! Generated by protoc-gen-synapse from protobuf service definition.
+            //! @generated
 
-        #error_types
+            #![allow(missing_docs)]
+            #![allow(unused_imports)]
 
-        #[doc = #struct_doc]
-        pub struct #struct_ident<S: #storage_trait_ident + 'static> {
-            storage: S,
-        }
+            use super::super::prelude::*;
+            use super::super::storage::#storage_trait_module_ident::{#storage_trait_ident, StorageError};
+            use tonic::{Request, Response, Status};
 
-        impl<S: #storage_trait_ident + 'static> #struct_ident<S> {
-            /// Create a new gRPC service with the given storage implementation
-            pub fn new(storage: S) -> Self {
-                Self { storage }
+            #error_types
+
+            #[doc = #struct_doc]
+            pub struct #struct_ident<S: #storage_trait_ident + 'static> {
+                storage: S,
             }
 
-            /// Get a reference to the underlying storage
-            pub fn storage(&self) -> &S {
-                &self.storage
+            impl<S: #storage_trait_ident + 'static> #struct_ident<S> {
+                /// Create a new gRPC service with the given storage implementation
+                pub fn new(storage: S) -> Self {
+                    Self { storage }
+                }
+
+                /// Get a reference to the underlying storage
+                pub fn storage(&self) -> &S {
+                    &self.storage
+                }
+
+                /// Get a mutable reference to the underlying storage
+                pub fn storage_mut(&mut self) -> &mut S {
+                    &mut self.storage
+                }
+
+                /// Consume the service and return the storage
+                pub fn into_storage(self) -> S {
+                    self.storage
+                }
             }
 
-            /// Get a mutable reference to the underlying storage
-            pub fn storage_mut(&mut self) -> &mut S {
-                &mut self.storage
+            #[tonic::async_trait]
+            impl<S: #storage_trait_ident + 'static> #service_module_ident::#service_trait_ident for #struct_ident<S> {
+                #(#methods)*
             }
+        };
 
-            /// Consume the service and return the storage
-            pub fn into_storage(self) -> S {
-                self.storage
-            }
-        }
+        // Format the generated code
+        let content = code.to_string();
+        let formatted = match syn::parse_file(&content) {
+            Ok(parsed) => prettyplease::unparse(&parsed),
+            Err(_) => content,
+        };
 
-        #[tonic::async_trait]
-        impl<S: #storage_trait_ident + 'static> #service_module_ident::#service_trait_ident for #struct_ident<S> {
-            #(#methods)*
-        }
-    };
-
-    // Format the generated code
-    let content = code.to_string();
-
-    // Try to format with prettyplease if we can parse it
-    let formatted = match syn::parse_file(&content) {
-        Ok(parsed) => prettyplease::unparse(&parsed),
-        Err(_) => content, // If parsing fails, use unformatted
-    };
-
-    Ok(Some(File {
-        name: Some(output_filename),
-        content: Some(formatted),
-        ..Default::default()
-    }))
+        Ok(vec![GeneratedFile {
+            path: output_filename,
+            content: formatted,
+        }])
+    }
 }
 
 /// Generate service method implementations
 fn generate_service_methods(
-    file_name: &str,
-    service_name: &str,
-    methods: &[MethodDescriptorProto],
+    ctx: &GeneratorContext,
+    service: &Service,
 ) -> Result<Vec<TokenStream>, GeneratorError> {
     let mut result = Vec::new();
 
-    for method in methods {
-        let method_name = method.name.as_deref().unwrap_or("");
-
-        // Check for method-level options
-        let method_options = get_cached_grpc_method_options(file_name, service_name, method_name);
+    for method in &service.methods {
+        let grpc_opts = method.grpc.as_ref();
 
         // Skip if marked
-        if method_options.as_ref().map(|o| o.skip).unwrap_or(false) {
+        if grpc_opts.is_some_and(|o| o.skip) {
             continue;
         }
 
         // Determine Rust method name
-        let rust_method_name = method_options
-            .as_ref()
+        let rust_method_name = grpc_opts
             .filter(|o| !o.method_name.is_empty())
             .map(|o| o.method_name.clone())
-            .unwrap_or_else(|| method_name.to_snake_case());
+            .unwrap_or_else(|| method.name.to_snake_case());
 
         // Extract input/output types
-        let request_type = extract_type_name(method.input_type.as_deref());
-        let response_type = extract_type_name(method.output_type.as_deref());
+        let request_type = extract_type_name(&method.input_type);
+        let response_type = extract_type_name(&method.output_type);
 
         // Check if there's a domain type for validation
-        // First check method-level options, then fall back to message validate options
-        let input_domain_type = method_options
-            .as_ref()
+        let input_domain_type = grpc_opts
             .filter(|o| !o.input_type.is_empty())
             .map(|o| o.input_type.clone())
             .or_else(|| {
-                // Check if the input message has validate options with generate_conversion
-                get_cached_validate_message_options(file_name, &request_type)
+                find_validate_options(ctx, &request_type)
                     .filter(|opts| opts.generate_conversion && !opts.name.is_empty())
                     .map(|opts| opts.name.clone())
             });
@@ -196,12 +182,11 @@ fn generate_service_methods(
         let response_ident = format_ident!("{}", response_type);
 
         // Check if response type has rich_errors option
-        let rich_errors = get_cached_grpc_response_options(file_name, &response_type)
+        let rich_errors = find_grpc_response_options(ctx, &response_type)
             .map(|opts| opts.rich_errors)
             .unwrap_or(false);
 
         let method_body = if rich_errors {
-            // Rich errors: return validation errors in response body
             if let Some(domain_type) = input_domain_type {
                 let domain_ident = format_ident!("{}", domain_type);
                 quote! {
@@ -223,7 +208,6 @@ fn generate_service_methods(
                         .map_err(|e| tonic::Status::from(ServiceError::Storage(e)))
                 }
             } else {
-                // No validation, just call storage
                 quote! {
                     self.storage
                         .#method_ident(request.into_inner())
@@ -233,7 +217,6 @@ fn generate_service_methods(
                 }
             }
         } else if let Some(domain_type) = input_domain_type {
-            // With validation: convert request to domain type first
             let domain_ident = format_ident!("{}", domain_type);
             quote! {
                 // Validate and convert to domain type
@@ -247,7 +230,6 @@ fn generate_service_methods(
                     .map_err(|e| tonic::Status::from(ServiceError::Storage(e)))
             }
         } else {
-            // Without validation: pass request directly to storage
             quote! {
                 self.storage
                     .#method_ident(request.into_inner())
@@ -272,22 +254,48 @@ fn generate_service_methods(
     Ok(result)
 }
 
+/// Find ValidateMessageOptions for a message by type name in the current package.
+fn find_validate_options<'a>(
+    ctx: &'a GeneratorContext,
+    type_name: &str,
+) -> Option<&'a ValidateMessageOptions> {
+    // Search messages
+    ctx.package
+        .messages
+        .iter()
+        .find(|m| m.name == type_name)
+        .and_then(|m| m.validate.as_ref())
+        // Also search entities (they can have validate options too)
+        .or_else(|| {
+            ctx.package
+                .entities
+                .iter()
+                .find(|e| e.name == type_name)
+                .and_then(|e| e.validate.as_ref())
+        })
+}
+
+/// Find GrpcResponseOptions for a message by type name in the current package.
+fn find_grpc_response_options<'a>(
+    ctx: &'a GeneratorContext,
+    type_name: &str,
+) -> Option<&'a GrpcResponseOptions> {
+    ctx.package
+        .messages
+        .iter()
+        .find(|m| m.name == type_name)
+        .and_then(|m| m.grpc_response.as_ref())
+}
+
 /// Extract a Rust type name from a protobuf type path
 ///
 /// Converts ".package.name.TypeName" to "TypeName"
-fn extract_type_name(type_name: Option<&str>) -> String {
-    match type_name {
-        Some(name) => {
-            // Protobuf type names are like ".package.name.TypeName"
-            // Extract just the type name (last segment)
-            let type_part = name
-                .rsplit('.')
-                .next()
-                .unwrap_or(name)
-                .trim_start_matches('.');
+fn extract_type_name(type_name: &str) -> String {
+    let type_part = type_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(type_name)
+        .trim_start_matches('.');
 
-            type_part.to_upper_camel_case()
-        }
-        None => "()".to_string(),
-    }
+    type_part.to_upper_camel_case()
 }

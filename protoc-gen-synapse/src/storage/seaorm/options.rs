@@ -805,6 +805,7 @@ pub fn get_cached_rpc_method_options(
 }
 
 /// Look up cached gRPC service options for a given file and service name
+#[allow(dead_code)]
 pub fn get_cached_grpc_service_options(
     file_name: &str,
     service_name: &str,
@@ -818,6 +819,7 @@ pub fn get_cached_grpc_service_options(
 }
 
 /// Look up cached gRPC method options for a given file, service, and method name
+#[allow(dead_code)]
 pub fn get_cached_grpc_method_options(
     file_name: &str,
     service_name: &str,
@@ -849,6 +851,7 @@ pub fn get_cached_validate_message_options(
 }
 
 /// Look up cached gRPC response options for a given file and message name
+#[allow(dead_code)]
 pub fn get_cached_grpc_response_options(
     file_name: &str,
     msg_name: &str,

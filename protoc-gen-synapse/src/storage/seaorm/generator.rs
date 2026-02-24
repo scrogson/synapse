@@ -6,8 +6,9 @@
 use super::{entity, implementation, options, package};
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
-use crate::{graphql, grpc, typescript};
+use crate::{graphql, typescript};
 use crate::validate::ValidateGenerator;
+use crate::grpc::GrpcGenerator;
 use crate::storage::seaorm::enum_gen::EnumGenerator;
 use synapse_gen::{CodeGenerator, GeneratorContext, ParsedSchema};
 use prost::Message;
@@ -120,10 +121,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             if let Some(generated) = implementation::generate(file_descriptor, svc, &request.proto_file)? {
                 files.push(generated);
             }
-            // gRPC service generation
-            if let Some(generated) = grpc::generate(file_descriptor, svc)? {
-                files.push(generated);
-            }
             // GraphQL resolver generation (Query/Mutation structs)
             for generated in graphql::generate_service(file_descriptor, svc)? {
                 files.push(generated);
@@ -165,10 +162,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 /// Generate SeaORM entities from raw protobuf bytes
 ///
 /// This entry point preserves extension data by using prost-reflect for decoding.
-/// It runs both the new synapse-gen-based generators (validate, enum) and the legacy
-/// generators (entity, graphql, grpc, etc.) and merges their outputs.
+/// It runs both the new synapse-gen-based generators (validate, enum, grpc) and the legacy
+/// generators (entity, graphql, etc.) and merges their outputs.
 pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, GeneratorError> {
-    // Parse with synapse-gen for new generators (validate, enum)
+    // Parse with synapse-gen for new generators (validate, enum, grpc)
     let parsed = ParsedSchema::parse(bytes)
         .map_err(|e| GeneratorError::DecodeError(e.to_string()))?;
 
@@ -216,6 +213,22 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
             new_gen_files.extend(
                 enum_gen
                     .generate_enum(&ctx, enum_ir)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+    }
+
+    // Run gRPC generator via synapse-gen IR
+    let grpc_gen = GrpcGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        for service in &package.services {
+            new_gen_files.extend(
+                grpc_gen
+                    .generate_service(&ctx, service)
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );
         }

@@ -7,4 +7,4 @@
 mod errors;
 mod service;
 
-pub use service::generate;
+pub use service::GrpcGenerator;
