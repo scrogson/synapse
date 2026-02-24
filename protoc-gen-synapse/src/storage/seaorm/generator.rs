@@ -3,11 +3,12 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, enum_gen, implementation, options, package};
+use super::{entity, implementation, options, package};
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
 use crate::{graphql, grpc, typescript};
 use crate::validate::ValidateGenerator;
+use crate::storage::seaorm::enum_gen::EnumGenerator;
 use synapse_gen::{CodeGenerator, GeneratorContext, ParsedSchema};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
@@ -105,13 +106,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             files.push(generated);
         }
 
-        // Process each enum in the file
-        for enum_desc in &file_descriptor.enum_type {
-            if let Some(generated) = enum_gen::generate(file_descriptor, enum_desc)? {
-                files.push(generated);
-            }
-        }
-
         // Process each service in the file
         for svc in &file_descriptor.service {
             // Storage defaults generation (standalone functions for partial overrides)
@@ -171,10 +165,10 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 /// Generate SeaORM entities from raw protobuf bytes
 ///
 /// This entry point preserves extension data by using prost-reflect for decoding.
-/// It runs both the new synapse-gen-based generators (validate) and the legacy
+/// It runs both the new synapse-gen-based generators (validate, enum) and the legacy
 /// generators (entity, graphql, grpc, etc.) and merges their outputs.
 pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, GeneratorError> {
-    // Parse with synapse-gen for new generators (validate)
+    // Parse with synapse-gen for new generators (validate, enum)
     let parsed = ParsedSchema::parse(bytes)
         .map_err(|e| GeneratorError::DecodeError(e.to_string()))?;
 
@@ -188,7 +182,7 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
     // Run new generators via synapse-gen IR
     let schema = parsed.schema();
     let validate_gen = ValidateGenerator;
-    let mut validate_files = Vec::new();
+    let mut new_gen_files = Vec::new();
 
     for package in &schema.packages {
         let ctx = GeneratorContext {
@@ -196,16 +190,32 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
             package,
         };
         for message in &package.messages {
-            validate_files.extend(
+            new_gen_files.extend(
                 validate_gen
                     .generate_message(&ctx, message)
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );
         }
         for entity in &package.entities {
-            validate_files.extend(
+            new_gen_files.extend(
                 validate_gen
                     .generate_entity(&ctx, entity)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+    }
+
+    // Run enum generator via synapse-gen IR
+    let enum_gen = EnumGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        for enum_ir in &package.enums {
+            new_gen_files.extend(
+                enum_gen
+                    .generate_enum(&ctx, enum_ir)
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );
         }
@@ -214,10 +224,10 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
     // Run legacy generators
     let mut response = generate(request)?;
 
-    // Merge validate files into the response.
+    // Merge new generator files into the response.
     // Note: No collision detection between new and legacy generators here.
     // This will be resolved when all generators migrate to SynapseGenerator.
-    for f in validate_files {
+    for f in new_gen_files {
         response.file.push(prost_types::compiler::code_generator_response::File {
             name: Some(f.path),
             content: Some(f.content),

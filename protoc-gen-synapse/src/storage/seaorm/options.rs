@@ -737,6 +737,7 @@ pub fn get_cached_column_options(
 }
 
 /// Look up cached enum options for a given file and enum name
+#[allow(dead_code)]
 pub fn get_cached_enum_options(
     file_name: &str,
     enum_name: &str,
@@ -750,6 +751,7 @@ pub fn get_cached_enum_options(
 }
 
 /// Look up cached enum value options for a given file, enum name, and value number
+#[allow(dead_code)]
 pub fn get_cached_enum_value_options(
     file_name: &str,
     enum_name: &str,
@@ -1039,12 +1041,14 @@ pub fn parse_column_options(field: &FieldDescriptorProto) -> Option<storage::Col
 }
 
 /// Parse enum options from an EnumDescriptorProto
+#[allow(dead_code)]
 pub fn parse_enum_options(enum_desc: &EnumDescriptorProto) -> Option<storage::EnumOptions> {
     let opts = enum_desc.options.as_ref()?;
     parse_enum_options_from_uninterpreted(&opts.uninterpreted_option)
 }
 
 /// Parse enum value options from an EnumValueDescriptorProto
+#[allow(dead_code)]
 pub fn parse_enum_value_options(
     value: &EnumValueDescriptorProto,
 ) -> Option<storage::EnumValueOptions> {
@@ -2069,6 +2073,7 @@ fn parse_column_options_from_uninterpreted(
 }
 
 /// Parse EnumOptions from uninterpreted options
+#[allow(dead_code)]
 fn parse_enum_options_from_uninterpreted(
     uninterpreted: &[UninterpretedOption],
 ) -> Option<storage::EnumOptions> {
@@ -2090,6 +2095,7 @@ fn parse_enum_options_from_uninterpreted(
 }
 
 /// Parse EnumValueOptions from uninterpreted options
+#[allow(dead_code)]
 fn parse_enum_value_options_from_uninterpreted(
     uninterpreted: &[UninterpretedOption],
 ) -> Option<storage::EnumValueOptions> {
@@ -2165,6 +2171,7 @@ fn apply_column_option(result: &mut storage::ColumnOptions, opt: &UninterpretedO
     }
 }
 
+#[allow(dead_code)]
 fn apply_enum_option(result: &mut storage::EnumOptions, opt: &UninterpretedOption) {
     if let Some(aggregate) = opt.aggregate_value.as_ref() {
         parse_aggregate_into_enum_options(result, aggregate);
@@ -2185,6 +2192,7 @@ fn apply_enum_option(result: &mut storage::EnumOptions, opt: &UninterpretedOptio
     }
 }
 
+#[allow(dead_code)]
 fn apply_enum_value_option(result: &mut storage::EnumValueOptions, opt: &UninterpretedOption) {
     if let Some(aggregate) = opt.aggregate_value.as_ref() {
         parse_aggregate_into_enum_value_options(result, aggregate);
@@ -2234,6 +2242,7 @@ fn parse_string_option(opt: &UninterpretedOption) -> String {
     String::new()
 }
 
+#[allow(dead_code)]
 fn parse_int_option(opt: &UninterpretedOption) -> i32 {
     if let Some(v) = opt.positive_int_value {
         return v as i32;
@@ -2316,6 +2325,7 @@ fn parse_aggregate_into_column_options(result: &mut storage::ColumnOptions, aggr
     }
 }
 
+#[allow(dead_code)]
 fn parse_aggregate_into_enum_options(result: &mut storage::EnumOptions, aggregate: &str) {
     for part in split_aggregate_parts(aggregate) {
         let (key, value) = match part.split_once(':') {
@@ -2337,6 +2347,7 @@ fn parse_aggregate_into_enum_options(result: &mut storage::EnumOptions, aggregat
     }
 }
 
+#[allow(dead_code)]
 fn parse_aggregate_into_enum_value_options(result: &mut storage::EnumValueOptions, aggregate: &str) {
     for part in split_aggregate_parts(aggregate) {
         let (key, value) = match part.split_once(':') {

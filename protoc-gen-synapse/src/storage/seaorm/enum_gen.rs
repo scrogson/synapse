@@ -3,190 +3,131 @@
 //! Generates SeaORM-compatible enum types from protobuf enum definitions.
 //! Supports both string and integer database representations.
 
-use super::options::{
-    get_cached_enum_options, get_cached_enum_value_options, parse_enum_options,
-    parse_enum_value_options, storage,
-};
-use crate::GeneratorError;
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{EnumDescriptorProto, FileDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::EnumStorageType;
+use synapse_gen::ir::{Enum, EnumVariant};
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
 
-/// Database type for enum storage
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DbType {
-    /// Store as string (default)
-    #[default]
-    String,
-    /// Store as integer
-    Integer,
-}
+/// Generator that produces SeaORM enum types from synapse.storage annotations.
+pub struct EnumGenerator;
 
-/// Generate a SeaORM enum from a protobuf enum definition
-///
-/// Returns None if the enum should be skipped
-pub fn generate(
-    file: &FileDescriptorProto,
-    enum_desc: &EnumDescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let enum_name = enum_desc
-        .name
-        .as_ref()
-        .ok_or_else(|| GeneratorError::CodeGenError("Enum missing name".to_string()))?;
-
-    // Try cached options first, then fall back to parsing uninterpreted options
-    let options = get_cached_enum_options(file_name, enum_name)
-        .or_else(|| parse_enum_options(enum_desc));
-
-    // Check if explicitly skipped
-    if let Some(ref opts) = options {
-        if opts.skip {
-            return Ok(None);
-        }
+impl CodeGenerator for EnumGenerator {
+    fn name(&self) -> &str {
+        "enum"
     }
 
-    // If no seaorm options, skip this enum (only generate annotated enums)
-    if options.is_none() {
-        return Ok(None);
+    fn generate_enum(
+        &self,
+        _ctx: &GeneratorContext,
+        enum_ir: &Enum,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let storage = match &enum_ir.storage {
+            Some(opts) if !opts.skip => opts,
+            Some(_) => return Ok(vec![]), // explicitly skipped
+            None => return Ok(vec![]),    // no storage options
+        };
+
+        let rust_enum_name = enum_ir.name.to_upper_camel_case();
+
+        // Generate the enum code
+        let enum_tokens =
+            generate_enum_tokens(&rust_enum_name, &enum_ir.variants, &storage.storage_type)?;
+
+        // Format the code
+        let code = format_code(enum_tokens)?;
+
+        // Determine output file path from raw file descriptor name
+        let proto_path = enum_ir.raw_file.name.as_deref().unwrap_or("unknown.proto");
+        let output_path =
+            proto_path.replace(".proto", &format!("/{}.rs", rust_enum_name.to_snake_case()));
+
+        Ok(vec![GeneratedFile {
+            path: output_path,
+            content: code,
+        }])
     }
-
-    let options = options.unwrap();
-
-    // Determine the Rust enum name (synapse storage doesn't have custom name option)
-    let rust_enum_name = enum_name.to_upper_camel_case();
-
-    // Determine database type from enum value
-    let db_type = if options.storage_type == storage::EnumStorageType::Integer as i32 {
-        DbType::Integer
-    } else {
-        DbType::String
-    };
-
-    // Generate the enum code
-    let enum_tokens = generate_enum_tokens(file_name, enum_desc, &rust_enum_name, db_type)?;
-
-    // Format the code
-    let code = format_code(enum_tokens)?;
-
-    // Determine output file path
-    let proto_path = file.name.as_deref().unwrap_or("unknown.proto");
-    let output_path =
-        proto_path.replace(".proto", &format!("/{}.rs", rust_enum_name.to_snake_case()));
-
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(code),
-        ..Default::default()
-    }))
 }
 
 /// Generate the TokenStream for a SeaORM enum
 fn generate_enum_tokens(
-    file_name: &str,
-    enum_desc: &EnumDescriptorProto,
     rust_enum_name: &str,
-    db_type: DbType,
+    variants: &[EnumVariant],
+    storage_type: &EnumStorageType,
 ) -> Result<TokenStream, GeneratorError> {
     let enum_ident = format_ident!("{}", rust_enum_name);
-    let proto_enum_name = enum_desc.name.as_deref().unwrap_or("");
 
     // Build prefix for stripping from values
     let prefix = format!("{}_", rust_enum_name.to_shouty_snake_case());
 
     // Generate variants
-    let mut variants = Vec::new();
+    let mut variant_tokens = Vec::new();
     let mut has_default = false;
 
-    for value in &enum_desc.value {
-        let value_name = value
-            .name
-            .as_ref()
-            .ok_or_else(|| GeneratorError::CodeGenError("Enum value missing name".to_string()))?;
-
-        let value_number = value.number.unwrap_or(0);
-
-        // Try cached options first, then fall back to parsing
-        let value_options = get_cached_enum_value_options(file_name, proto_enum_name, value_number)
-            .or_else(|| parse_enum_value_options(value));
-
+    for variant in variants {
         // Skip if explicitly marked as skip
-        if value_options.as_ref().is_some_and(|opts| opts.skip) {
+        if variant.skip {
             continue;
         }
 
         // Skip UNSPECIFIED/UNKNOWN variants by default
-        if value_name.ends_with("_UNSPECIFIED") || value_name.ends_with("_UNKNOWN") {
+        if variant.name.ends_with("_UNSPECIFIED") || variant.name.ends_with("_UNKNOWN") {
             continue;
         }
 
         // Check if this is the default variant
-        let is_default = value_options.as_ref().is_some_and(|opts| opts.default);
-        if is_default {
+        if variant.is_default {
             has_default = true;
         }
 
         // Determine variant name (strip enum prefix and convert to PascalCase)
-        let variant_name = convert_enum_variant_name(value_name, rust_enum_name);
+        let variant_name = convert_enum_variant_name(&variant.name, rust_enum_name);
         let variant_ident = format_ident!("{}", variant_name);
 
-        // Generate value attribute based on db_type
-        let value_attr = match db_type {
-            DbType::String => {
-                // Determine string value - strip prefix like we do for variant names
-                let string_val = if let Some(ref opts) = value_options {
-                    if !opts.string_value.is_empty() {
-                        opts.string_value.clone()
-                    } else {
-                        // Strip prefix and convert to snake_case
-                        let stripped = value_name.strip_prefix(&prefix).unwrap_or(value_name);
-                        stripped.to_snake_case()
-                    }
+        // Generate value attribute based on storage_type
+        let value_attr = match storage_type {
+            EnumStorageType::String | EnumStorageType::Unspecified => {
+                let string_val = if !variant.string_value.is_empty() {
+                    variant.string_value.clone()
                 } else {
-                    let stripped = value_name.strip_prefix(&prefix).unwrap_or(value_name);
+                    let stripped = variant.name.strip_prefix(&prefix).unwrap_or(&variant.name);
                     stripped.to_snake_case()
                 };
                 quote! { #[sea_orm(string_value = #string_val)] }
             }
-            DbType::Integer => {
-                // Determine int value
-                let int_val = if let Some(ref opts) = value_options {
-                    if opts.int_value != 0 {
-                        opts.int_value
-                    } else {
-                        value_number
-                    }
+            EnumStorageType::Integer => {
+                let int_val = if variant.int_value != 0 {
+                    variant.int_value
                 } else {
-                    value_number
+                    variant.number
                 };
                 quote! { #[sea_orm(num_value = #int_val)] }
             }
         };
 
         // Add #[default] if marked
-        let default_attr = if is_default {
+        let default_attr = if variant.is_default {
             quote! { #[default] }
         } else {
             quote! {}
         };
 
-        variants.push(quote! {
+        variant_tokens.push(quote! {
             #default_attr
             #value_attr
             #variant_ident
         });
     }
 
-    // Generate type attributes based on db_type
-    let type_attrs = match db_type {
-        DbType::String => {
+    // Generate type attributes based on storage_type
+    let type_attrs = match storage_type {
+        EnumStorageType::String | EnumStorageType::Unspecified => {
             quote! {
                 #[sea_orm(rs_type = "String", db_type = "String(StringLen::N(64))")]
             }
         }
-        DbType::Integer => {
+        EnumStorageType::Integer => {
             quote! {
                 #[sea_orm(rs_type = "i32", db_type = "Integer")]
             }
@@ -211,7 +152,7 @@ fn generate_enum_tokens(
         #derives
         #type_attrs
         pub enum #enum_ident {
-            #(#variants),*
+            #(#variant_tokens),*
         }
     })
 }
@@ -235,7 +176,7 @@ fn convert_enum_variant_name(name: &str, enum_name: &str) -> String {
 fn format_code(tokens: TokenStream) -> Result<String, GeneratorError> {
     let code = tokens.to_string();
     let parsed = syn::parse_file(&code).map_err(|e| {
-        GeneratorError::CodeGenError(format!("Failed to parse generated code: {}", e))
+        GeneratorError::Parse(format!("Failed to parse generated code: {}", e))
     })?;
     Ok(prettyplease::unparse(&parsed))
 }
@@ -243,51 +184,41 @@ fn format_code(tokens: TokenStream) -> Result<String, GeneratorError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use prost_types::uninterpreted_option::NamePart;
-    use prost_types::{EnumOptions, EnumValueDescriptorProto, UninterpretedOption};
 
-    fn create_test_enum() -> EnumDescriptorProto {
-        // Create synapse.storage.enum_type option
-        let enum_option = UninterpretedOption {
-            name: vec![NamePart {
-                name_part: "synapse.storage.enum_type".to_string(),
-                is_extension: true,
-            }],
-            aggregate_value: Some("storage_type: ENUM_STORAGE_TYPE_STRING".to_string()),
-            ..Default::default()
-        };
-
-        EnumDescriptorProto {
-            name: Some("Status".to_string()),
-            value: vec![
-                EnumValueDescriptorProto {
-                    name: Some("STATUS_UNKNOWN".to_string()),
-                    number: Some(0),
-                    ..Default::default()
-                },
-                EnumValueDescriptorProto {
-                    name: Some("STATUS_ACTIVE".to_string()),
-                    number: Some(1),
-                    ..Default::default()
-                },
-                EnumValueDescriptorProto {
-                    name: Some("STATUS_INACTIVE".to_string()),
-                    number: Some(2),
-                    ..Default::default()
-                },
-            ],
-            options: Some(EnumOptions {
-                uninterpreted_option: vec![enum_option],
-                ..Default::default()
-            }),
-            ..Default::default()
-        }
+    fn create_test_variants() -> Vec<EnumVariant> {
+        vec![
+            EnumVariant {
+                name: "STATUS_UNKNOWN".to_string(),
+                number: 0,
+                string_value: String::new(),
+                int_value: 0,
+                is_default: false,
+                skip: false,
+            },
+            EnumVariant {
+                name: "STATUS_ACTIVE".to_string(),
+                number: 1,
+                string_value: String::new(),
+                int_value: 0,
+                is_default: false,
+                skip: false,
+            },
+            EnumVariant {
+                name: "STATUS_INACTIVE".to_string(),
+                number: 2,
+                string_value: String::new(),
+                int_value: 0,
+                is_default: false,
+                skip: false,
+            },
+        ]
     }
 
     #[test]
     fn test_generate_enum_tokens_string() {
-        let enum_desc = create_test_enum();
-        let tokens = generate_enum_tokens("test.proto", &enum_desc, "Status", DbType::String).unwrap();
+        let variants = create_test_variants();
+        let tokens =
+            generate_enum_tokens("Status", &variants, &EnumStorageType::String).unwrap();
         let code = tokens.to_string();
 
         assert!(code.contains("DeriveActiveEnum"));
@@ -302,8 +233,9 @@ mod tests {
 
     #[test]
     fn test_generate_enum_tokens_integer() {
-        let enum_desc = create_test_enum();
-        let tokens = generate_enum_tokens("test.proto", &enum_desc, "Status", DbType::Integer).unwrap();
+        let variants = create_test_variants();
+        let tokens =
+            generate_enum_tokens("Status", &variants, &EnumStorageType::Integer).unwrap();
         let code = tokens.to_string();
 
         assert!(code.contains("DeriveActiveEnum"));
@@ -314,11 +246,20 @@ mod tests {
     #[test]
     fn test_convert_enum_variant_name() {
         // With matching prefix - should strip it
-        assert_eq!(convert_enum_variant_name("USER_STATUS_ACTIVE", "UserStatus"), "Active");
-        assert_eq!(convert_enum_variant_name("USER_STATUS_UNSPECIFIED", "UserStatus"), "Unspecified");
+        assert_eq!(
+            convert_enum_variant_name("USER_STATUS_ACTIVE", "UserStatus"),
+            "Active"
+        );
+        assert_eq!(
+            convert_enum_variant_name("USER_STATUS_UNSPECIFIED", "UserStatus"),
+            "Unspecified"
+        );
 
         // Without matching prefix - should keep as-is and convert
         assert_eq!(convert_enum_variant_name("UNKNOWN", "Status"), "Unknown");
-        assert_eq!(convert_enum_variant_name("MY_LONG_VALUE_NAME", "Other"), "MyLongValueName");
+        assert_eq!(
+            convert_enum_variant_name("MY_LONG_VALUE_NAME", "Other"),
+            "MyLongValueName"
+        );
     }
 }
