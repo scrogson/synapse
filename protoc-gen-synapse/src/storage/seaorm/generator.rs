@@ -214,7 +214,9 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
     // Run legacy generators
     let mut response = generate(request)?;
 
-    // Merge validate files into the response
+    // Merge validate files into the response.
+    // Note: No collision detection between new and legacy generators here.
+    // This will be resolved when all generators migrate to SynapseGenerator.
     for f in validate_files {
         response.file.push(prost_types::compiler::code_generator_response::File {
             name: Some(f.path),

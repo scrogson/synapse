@@ -32,7 +32,7 @@ impl CodeGenerator for ValidateGenerator {
             Some(opts) if opts.generate_conversion && !opts.name.is_empty() => opts,
             _ => return Ok(vec![]),
         };
-        generate_domain_type(ctx, &opts.name, &message.name, &message.fields, opts)
+        generate_domain_type(&ctx.package.name, &message.name, &message.fields, opts)
     }
 
     fn generate_entity(
@@ -44,23 +44,24 @@ impl CodeGenerator for ValidateGenerator {
             Some(opts) if opts.generate_conversion && !opts.name.is_empty() => opts,
             _ => return Ok(vec![]),
         };
-        generate_domain_type(ctx, &opts.name, &entity.name, &entity.fields, opts)
+        generate_domain_type(&ctx.package.name, &entity.name, &entity.fields, opts)
     }
 }
 
 /// Shared implementation that generates a domain type from fields and validate options.
 fn generate_domain_type(
-    ctx: &GeneratorContext,
-    domain_name: &str,
+    package_name: &str,
     proto_name: &str,
     fields: &[Field],
-    _opts: &ValidateMessageOptions,
+    validate: &ValidateMessageOptions,
 ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+    let domain_name = &validate.name;
+
     // Generate the output filename
     let module_name = domain_name.to_snake_case();
     let output_filename = format!(
         "{}/{}.rs",
-        ctx.package.name.replace('.', "/"),
+        package_name.replace('.', "/"),
         module_name,
     );
 
@@ -223,7 +224,8 @@ fn generate_fields(
                 let validation = generate_field_validation(
                     &field.name,
                     &field_ident,
-                    field,
+                    &field.field_type,
+                    field.nullable,
                     rules,
                     field_error_ident,
                 );
@@ -234,8 +236,8 @@ fn generate_fields(
         }
 
         // Generate field assignment (with type conversion if custom type)
-        if custom_type.is_some() {
-            let type_ident = format_ident!("{}", custom_type.unwrap());
+        if let Some(ref ct) = custom_type {
+            let type_ident = format_ident!("{}", ct);
             let field_name_str = &field.name;
             field_assignments.push(quote! {
                 #field_ident: #type_ident::from_str(&request.#field_ident)
@@ -260,14 +262,15 @@ fn generate_fields(
 fn generate_field_validation(
     field_name: &str,
     field_ident: &proc_macro2::Ident,
-    field: &Field,
+    field_type: &FieldType,
+    nullable: bool,
     rules: &ValidationRules,
     field_error_ident: &proc_macro2::Ident,
 ) -> TokenStream {
     let mut validations = Vec::new();
-    let is_optional = field.nullable;
-    let is_string = matches!(field.field_type, FieldType::String);
-    let is_bytes = matches!(field.field_type, FieldType::Bytes);
+    let is_optional = nullable;
+    let is_string = matches!(field_type, FieldType::String);
+    let is_bytes = matches!(field_type, FieldType::Bytes);
 
     // Required validation
     if rules.required {
