@@ -19,107 +19,94 @@ mod object;
 mod resolver;
 mod schema;
 
-use crate::error::GeneratorError;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{DescriptorProto, FileDescriptorProto, ServiceDescriptorProto};
+use synapse_gen::ir::{Entity, Message, Service};
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
 
-/// Generate GraphQL Object types from a message
-#[allow(dead_code)]
-pub fn generate_message(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    object::generate(file, message)
-}
+pub struct GraphQLGenerator;
 
-/// Generate GraphQL resolvers from a service
-#[allow(dead_code)]
-pub fn generate_service(
-    file: &FileDescriptorProto,
-    service: &ServiceDescriptorProto,
-) -> Result<Vec<File>, GeneratorError> {
-    resolver::generate(file, service)
-}
+impl CodeGenerator for GraphQLGenerator {
+    fn name(&self) -> &str {
+        "graphql"
+    }
 
-/// Generate the Relay Node interface for a file
-#[allow(dead_code)]
-pub fn generate_node_interface(file: &FileDescriptorProto) -> Result<Option<File>, GeneratorError> {
-    let node_types = node::collect_node_types(file);
-    node::generate_node_interface(file, &node_types)
-}
+    fn generate_entity(
+        &self,
+        ctx: &GeneratorContext,
+        entity: &Entity,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let mut files = Vec::new();
 
-/// Generate DataLoaders for a message (based on its relations)
-#[allow(dead_code)]
-pub fn generate_dataloaders(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-    all_files: &[FileDescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
-    dataloader::generate(file, message, all_files)
-}
+        // Object type
+        files.extend(object::generate_for_entity(&ctx.package.name, entity)?);
 
-/// Generate an entity loader for a message (for BelongsTo relations)
-///
-/// Creates a DataLoader that fetches entities by ID, used for relation resolvers.
-/// E.g., UserLoader batches `Post.author` lookups.
-pub fn generate_entity_loader(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    dataloader::generate_entity_loader(file, message)
-}
+        // DataLoaders for relations
+        let all_entities: Vec<&Entity> = ctx.package.entities.iter().collect();
+        files.extend(dataloader::generate(&ctx.package.name, entity, &all_entities)?);
 
-/// Generate the unified GraphQL schema mod.rs for a file
-///
-/// This creates the graphql/mod.rs that:
-/// - Imports all generated sub-modules (entities, inputs, filters)
-/// - Defines combined Query/Mutation using MergedObject
-/// - Defines Connection types (PageInfo, Edge, Connection)
-/// - Provides schema builder function
-#[allow(dead_code)]
-pub fn generate_schema(
-    file: &FileDescriptorProto,
-    all_files: &[FileDescriptorProto],
-) -> Result<Option<File>, GeneratorError> {
-    schema::generate(file, all_files)
-}
+        // Entity loader for BelongsTo relations
+        if let Some(f) = dataloader::generate_entity_loader(&ctx.package.name, entity)? {
+            files.push(f);
+        }
 
-/// Generate auto-generated filter types for entities in a package
-///
-/// Creates:
-/// - Primitive filters (IntFilter, StringFilter, BoolFilter)
-/// - Entity-specific filters (UserFilter, PostFilter)
-/// - Entity-specific order by types (UserOrderBy, PostOrderBy)
-/// - OrderDirection enum
-pub fn generate_filters(
-    file: &FileDescriptorProto,
-    entities: &[&DescriptorProto],
-    all_files: &[FileDescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
-    filter::generate_filters_for_package(file, entities, all_files)
-}
+        Ok(files)
+    }
 
-/// Generate auto-generated Relay connection types for entities in a package
-///
-/// Creates:
-/// - PageInfo type
-/// - Entity Edge types (UserEdge, PostEdge)
-/// - Entity Connection types (UserConnection, PostConnection)
-pub fn generate_connections(
-    file: &FileDescriptorProto,
-    entities: &[&DescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
-    connection::generate_connections_for_package(file, entities)
-}
+    fn generate_message(
+        &self,
+        ctx: &GeneratorContext,
+        message: &Message,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        // Object/Input types for non-entity messages
+        let mut files = Vec::new();
+        if let Some(f) = object::generate_for_message(&ctx.package.name, message)? {
+            files.push(f);
+        }
+        Ok(files)
+    }
 
-/// Generate auto-generated input types from mutation request messages
-///
-/// Creates GraphQL InputObject types from request messages:
-/// - CreateUserRequest → CreateUserInput (all fields)
-/// - UpdateUserRequest → UpdateUserInput (all fields except id)
-pub fn generate_inputs(
-    file: &FileDescriptorProto,
-    service: &ServiceDescriptorProto,
-) -> Result<Vec<File>, GeneratorError> {
-    input::generate_inputs_for_service(file, service)
+    fn generate_service(
+        &self,
+        ctx: &GeneratorContext,
+        service: &Service,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let mut files = Vec::new();
+
+        // Query/Mutation resolvers
+        files.extend(resolver::generate(ctx, service)?);
+
+        // Auto-generated inputs
+        files.extend(input::generate_inputs_for_service(ctx, service)?);
+
+        Ok(files)
+    }
+
+    fn finalize_package(
+        &self,
+        ctx: &GeneratorContext,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let mut files = Vec::new();
+        let entities: Vec<&Entity> = ctx.package.entities.iter().collect();
+
+        // Filters and connections
+        if !entities.is_empty() {
+            files.extend(filter::generate_filters_for_package(ctx, &entities)?);
+            files.extend(connection::generate_connections_for_package(
+                &ctx.package.name,
+                &entities,
+            )?);
+        }
+
+        // Node interface
+        let node_types = node::collect_node_types(&entities);
+        if let Some(f) = node::generate_node_interface(&ctx.package.name, &node_types)? {
+            files.push(f);
+        }
+
+        // Unified schema
+        if let Some(f) = schema::generate(ctx)? {
+            files.push(f);
+        }
+
+        Ok(files)
+    }
 }

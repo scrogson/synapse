@@ -7,38 +7,32 @@
 //! Fields marked with `from_context` are excluded from the GraphQL input
 //! and populated server-side from the authentication context.
 
-use crate::error::GeneratorError;
-use crate::storage::seaorm::options::{
-    get_cached_graphql_field_options, get_cached_graphql_mutation_options,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use prost_types::compiler::code_generator_response::File;
 use prost_types::field_descriptor_proto::Type;
-use prost_types::{FieldDescriptorProto, FileDescriptorProto, ServiceDescriptorProto};
+use prost_types::FieldDescriptorProto;
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::GraphQLMethodKind;
+use synapse_gen::ir::Service;
+use synapse_gen::{GeneratedFile, GeneratorContext, GeneratorError};
 
 /// Generate input types for mutation methods in a service
 pub fn generate_inputs_for_service(
-    file: &FileDescriptorProto,
-    service: &ServiceDescriptorProto,
-) -> Result<Vec<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let svc_name = service.name.as_deref().unwrap_or("");
+    ctx: &GeneratorContext,
+    service: &Service,
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
     let mut files = Vec::new();
 
-    for method in &service.method {
-        let method_name = method.name.as_deref().unwrap_or("");
-        let mutation_opts = get_cached_graphql_mutation_options(file_name, svc_name, method_name);
-
-        // Only process mutations (methods with synapse.graphql.mutation option)
-        let Some(opts) = mutation_opts else {
+    for method in &service.methods {
+        // Only process mutations (methods with graphql option and Mutation kind)
+        let Some(ref graphql_opts) = method.graphql else {
             continue;
         };
 
-        // Skip if marked
-        if opts.skip {
+        if graphql_opts.kind != GraphQLMethodKind::Mutation || graphql_opts.skip {
             continue;
         }
+
+        let method_name = &method.name;
 
         // Check if this is a create or update operation
         let is_create = method_name.to_lowercase().starts_with("create");
@@ -48,25 +42,22 @@ pub fn generate_inputs_for_service(
             continue;
         }
 
-        // Get the request message type
-        let request_type_name = method
-            .input_type
-            .as_ref()
-            .map(|t| t.rsplit('.').next().unwrap_or(t))
-            .unwrap_or("");
+        // Get the request message type name
+        let request_type_name = method.input_type.rsplit('.').next().unwrap_or(&method.input_type);
 
-        // Find the request message in the file
-        let request_msg = file
-            .message_type
+        // Find the request message in the package's messages
+        let request_msg = ctx
+            .package
+            .messages
             .iter()
-            .find(|m| m.name.as_deref() == Some(request_type_name));
+            .find(|m| m.name == request_type_name);
 
         if let Some(msg) = request_msg {
             // Generate input type name: CreateUserRequest → CreateUserInput
             let input_name = request_type_name.replace("Request", "Input");
 
             if let Some(input_file) =
-                generate_input_type(file, msg, &input_name, is_update)?
+                generate_input_type(ctx, msg, &input_name, is_update)?
             {
                 files.push(input_file);
             }
@@ -91,14 +82,13 @@ struct ContextField {
 
 /// Generate a GraphQL InputObject from a request message
 fn generate_input_type(
-    file: &FileDescriptorProto,
-    message: &prost_types::DescriptorProto,
+    ctx: &GeneratorContext,
+    message: &synapse_gen::ir::Message,
     input_name: &str,
     is_update: bool,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let package = file.package.as_deref().unwrap_or("");
-    let msg_name = message.name.as_deref().unwrap_or("");
+) -> Result<Option<GeneratedFile>, GeneratorError> {
+    let package_name = &ctx.package.name;
+    let msg_name = &message.name;
 
     let input_ident = format_ident!("{}", input_name);
     let request_ident = format_ident!("{}", msg_name);
@@ -108,11 +98,11 @@ fn generate_input_type(
     let mut self_conversion_tokens = Vec::new();
     let mut context_fields: Vec<ContextField> = Vec::new();
 
-    for field in &message.field {
-        let field_name = field.name.as_deref().unwrap_or("");
-        let field_number = field.number.unwrap_or(0);
+    for ir_field in &message.fields {
+        let field_name = &ir_field.name;
         let snake_name = field_name.to_snake_case();
         let field_ident = format_ident!("{}", snake_name);
+        let raw_field = ir_field.raw;
 
         // For update operations, skip the id field (it's a separate argument)
         if is_update && field_name == "id" {
@@ -121,13 +111,12 @@ fn generate_input_type(
 
         // Check for from_context option - these fields are excluded from input
         // and populated server-side
-        let field_opts = get_cached_graphql_field_options(file_name, msg_name, field_number);
-        if let Some(ref opts) = field_opts {
-            if let Some(ref ctx_source) = opts.from_context {
+        if let Some(ref graphql_opts) = ir_field.graphql {
+            if let Some(ref ctx_source) = graphql_opts.from_context {
                 // Track this as a context-injected field
                 context_fields.push(ContextField {
                     name: snake_name.clone(),
-                    rust_type: proto_type_to_rust_type(field),
+                    rust_type: proto_type_to_rust_type(raw_field),
                     path: ctx_source.path.clone(),
                     required: ctx_source.required,
                 });
@@ -135,8 +124,8 @@ fn generate_input_type(
             }
         }
 
-        let is_optional = field.proto3_optional.unwrap_or(false);
-        let rust_type = proto_type_to_rust_type(field);
+        let is_optional = raw_field.proto3_optional.unwrap_or(false);
+        let rust_type = proto_type_to_rust_type(raw_field);
 
         let field_type = if is_optional {
             quote! { Option<#rust_type> }
@@ -270,14 +259,13 @@ fn generate_input_type(
     // Determine output file path
     let output_path = format!(
         "{}/graphql/{}.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         input_name.to_snake_case()
     );
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 

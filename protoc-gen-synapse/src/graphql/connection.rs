@@ -5,39 +5,37 @@
 //! - Entity Edge types (UserEdge, PostEdge, etc.)
 //! - Entity Connection types (UserConnection, PostConnection, etc.)
 
-use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use prost_types::compiler::code_generator_response::File;
-use prost_types::DescriptorProto;
-use prost_types::FileDescriptorProto;
 use quote::{format_ident, quote};
+use synapse_gen::ir::Entity;
+use synapse_gen::{GeneratedFile, GeneratorError};
 
 /// Generate all Relay connection types for a package
 ///
 /// Only generates types that are NOT already defined in proto.
 /// Proto-defined types are handled by object.rs which generates proper GraphQL wrappers.
 pub fn generate_connections_for_package(
-    file: &FileDescriptorProto,
-    entities: &[&DescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
+    package_name: &str,
+    entities: &[&Entity],
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
     let mut files = Vec::new();
 
     // Always generate PageInfo (proto PageInfo needs GraphQL wrapper)
-    files.push(generate_page_info(file)?);
+    files.push(generate_page_info()?);
 
     // Always generate Edge and Connection types for each entity
     // (proto Connection types have synapse.storage.connection_type, not graphql.message)
     for entity in entities {
-        let entity_name = entity.name.as_deref().unwrap_or("");
-        files.push(generate_entity_edge(file, entity_name)?);
-        files.push(generate_entity_connection(file, entity_name)?);
+        let entity_name = entity.raw.name.as_deref().unwrap_or("");
+        files.push(generate_entity_edge(package_name, entity_name)?);
+        files.push(generate_entity_connection(package_name, entity_name)?);
     }
 
     Ok(files)
 }
 
 /// Generate PageInfo type (in shared synapse/relay/graphql location)
-fn generate_page_info(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_page_info() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated Relay PageInfo type
         //! @generated
@@ -81,18 +79,17 @@ fn generate_page_info(_file: &FileDescriptorProto) -> Result<File, GeneratorErro
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/page_info.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate entity Edge type (e.g., UserEdge)
 fn generate_entity_edge(
-    file: &FileDescriptorProto,
+    package_name: &str,
     entity_name: &str,
-) -> Result<File, GeneratorError> {
+) -> Result<GeneratedFile, GeneratorError> {
     let edge_name = format!("{}Edge", entity_name.to_upper_camel_case());
     let edge_ident = format_ident!("{}", edge_name);
     let entity_ident = format_ident!("{}", entity_name.to_upper_camel_case());
@@ -122,25 +119,23 @@ fn generate_entity_edge(
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}_edge.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         entity_name.to_snake_case()
     );
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate entity Connection type (e.g., UserConnection)
 fn generate_entity_connection(
-    file: &FileDescriptorProto,
+    package_name: &str,
     entity_name: &str,
-) -> Result<File, GeneratorError> {
+) -> Result<GeneratedFile, GeneratorError> {
     let connection_name = format!("{}Connection", entity_name.to_upper_camel_case());
     let connection_ident = format_ident!("{}", connection_name);
     let edge_name = format!("{}Edge", entity_name.to_upper_camel_case());
@@ -191,16 +186,14 @@ fn generate_entity_connection(
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}_connection.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         entity_name.to_snake_case()
     );
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }

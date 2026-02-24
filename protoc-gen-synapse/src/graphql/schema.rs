@@ -3,16 +3,12 @@
 //! Generates the unified Query, Mutation, and schema builder for a proto file.
 //! This creates the graphql/mod.rs that wires all generated types together.
 
-use crate::error::GeneratorError;
-use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_mutation_options,
-    get_cached_graphql_service_options, get_cached_graphql_type_options,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::FileDescriptorProto;
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::GraphQLMethodKind;
+use synapse_gen::ir::RelationType;
+use synapse_gen::{GeneratedFile, GeneratorContext, GeneratorError};
 
 /// Collect information about all generated types for the schema
 pub struct SchemaInfo {
@@ -30,14 +26,8 @@ pub struct SchemaInfo {
     pub has_many_relations: Vec<(String, String)>,
 }
 
-/// Collect schema information from a file descriptor
-///
-/// This searches all proto files to find entities that may be defined in imports.
-pub fn collect_schema_info(
-    file: &FileDescriptorProto,
-    all_files: &[FileDescriptorProto],
-) -> SchemaInfo {
-    let main_package = file.package.as_deref().unwrap_or("");
+/// Collect schema information from the IR context
+pub fn collect_schema_info(ctx: &GeneratorContext) -> SchemaInfo {
     let mut info = SchemaInfo {
         entities: Vec::new(),
         input_types: Vec::new(),
@@ -47,98 +37,83 @@ pub fn collect_schema_info(
         has_many_relations: Vec::new(),
     };
 
-    // Search all files for entities that belong to this package (including sub-packages)
-    for proto_file in all_files {
-        let proto_file_name = proto_file.name.as_deref().unwrap_or("");
-        let proto_package = proto_file.package.as_deref().unwrap_or("");
-
-        // Only include messages from this package or its sub-packages
-        if !proto_package.starts_with(main_package) {
+    // Entities from IR
+    for entity in &ctx.package.entities {
+        // Skip if graphql.skip is true
+        if entity.graphql.as_ref().is_some_and(|o| o.skip) {
             continue;
         }
 
-        for message in &proto_file.message_type {
-            let msg_name = message.name.as_deref().unwrap_or("");
-            let snake_name = msg_name.to_snake_case();
+        let msg_name = &entity.name;
+        let snake_name = msg_name.to_snake_case();
 
-            // Check for graphql options
-            let graphql_opts = get_cached_graphql_type_options(proto_file_name, msg_name);
-            let entity_opts = get_cached_entity_options(proto_file_name, msg_name);
+        info.entities.push((msg_name.clone(), snake_name.clone()));
+        info.has_auto_filters = true;
 
-            // Skip if graphql.skip is true
-            if graphql_opts.as_ref().is_some_and(|o| o.skip) {
-                continue;
-            }
-
-            // Categorize by type
-            if graphql_opts.as_ref().is_some_and(|o| o.input) {
-                // Include input types (including proto-defined Filter/OrderBy types)
-                info.input_types.push((msg_name.to_string(), snake_name));
-            } else if let Some(ref entity) = entity_opts {
-                // It's an entity with a table - filters may be auto-generated
-                info.entities.push((msg_name.to_string(), snake_name.clone()));
-                info.has_auto_filters = true;
-
-                // Collect HasMany relations for DataLoader registration
-                // Only include relations that have a foreign_key (ManyToMany uses through table)
-                for relation in &entity.relations {
-                    use crate::options::synapse::storage::RelationType;
-                    let has_fk = !relation.foreign_key.is_empty();
-                    if has_fk
-                        && matches!(
-                            relation.r#type(),
-                            RelationType::HasMany | RelationType::ManyToMany
-                        )
-                    {
-                        info.has_many_relations.push((
-                            msg_name.to_string(),
-                            relation.related.clone(),
-                        ));
-                    }
-                }
+        // Collect HasMany relations for DataLoader registration
+        for relation in &entity.relations {
+            let has_fk = !relation.foreign_key.is_empty();
+            if has_fk
+                && matches!(
+                    relation.relation_type,
+                    RelationType::HasMany | RelationType::ManyToMany
+                )
+            {
+                info.has_many_relations.push((
+                    msg_name.clone(),
+                    relation.related.clone(),
+                ));
             }
         }
     }
 
-    // Services are only in the main file
-    let main_file_name = file.name.as_deref().unwrap_or("");
+    // Input types from messages
+    for message in &ctx.package.messages {
+        let graphql_opts = message.graphql.as_ref();
 
-    for service in &file.service {
-        let svc_name = service.name.as_deref().unwrap_or("");
-        let svc_opts = get_cached_graphql_service_options(main_file_name, svc_name);
-
-        if svc_opts.as_ref().is_some_and(|o| o.skip) {
+        // Skip if graphql.skip is true
+        if graphql_opts.is_some_and(|o| o.skip) {
             continue;
         }
 
-        info.services.push(svc_name.to_string());
+        if graphql_opts.is_some_and(|o| o.input) {
+            let msg_name = &message.name;
+            let snake_name = msg_name.to_snake_case();
+            info.input_types.push((msg_name.clone(), snake_name));
+        }
+    }
+
+    // Services from IR
+    for service in &ctx.package.services {
+        let svc_name = &service.name;
+
+        if service.graphql.as_ref().is_some_and(|o| o.skip) {
+            continue;
+        }
+
+        info.services.push(svc_name.clone());
 
         // Collect auto-generated input types from mutation methods
-        for method in &service.method {
-            let method_name = method.name.as_deref().unwrap_or("");
-            let mutation_opts = get_cached_graphql_mutation_options(main_file_name, svc_name, method_name);
-
-            // Only process mutations (methods with synapse.graphql.mutation option)
-            let Some(opts) = mutation_opts else {
+        for method in &service.methods {
+            let Some(ref graphql_opts) = method.graphql else {
                 continue;
             };
 
-            if opts.skip {
+            if graphql_opts.kind != GraphQLMethodKind::Mutation || graphql_opts.skip {
                 continue;
             }
 
             // Check if this is a create or update operation
+            let method_name = &method.name;
             let is_create = method_name.to_lowercase().starts_with("create");
             let is_update = method_name.to_lowercase().starts_with("update");
 
             if is_create || is_update {
                 // Derive input type name from request type
-                if let Some(request_type) = &method.input_type {
-                    let request_name = request_type.rsplit('.').next().unwrap_or(request_type);
-                    let input_name = request_name.replace("Request", "Input");
-                    let input_snake = input_name.to_snake_case();
-                    info.auto_input_types.push((input_name, input_snake));
-                }
+                let request_name = method.input_type.rsplit('.').next().unwrap_or(&method.input_type);
+                let input_name = request_name.replace("Request", "Input");
+                let input_snake = input_name.to_snake_case();
+                info.auto_input_types.push((input_name, input_snake));
             }
         }
     }
@@ -148,10 +123,9 @@ pub fn collect_schema_info(
 
 /// Generate the graphql/mod.rs file that wires everything together
 pub fn generate(
-    file: &FileDescriptorProto,
-    all_files: &[FileDescriptorProto],
-) -> Result<Option<File>, GeneratorError> {
-    let info = collect_schema_info(file, all_files);
+    ctx: &GeneratorContext,
+) -> Result<Option<GeneratedFile>, GeneratorError> {
+    let info = collect_schema_info(ctx);
 
     // Skip if no GraphQL types to generate
     if info.entities.is_empty() && info.services.is_empty() {
@@ -325,13 +299,12 @@ pub fn generate(
     };
 
     // Determine output path using package name
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/mod.rs", package.replace('.', "/"));
+    let package_name = &ctx.package.name;
+    let output_path = format!("{}/graphql/mod.rs", package_name.replace('.', "/"));
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 

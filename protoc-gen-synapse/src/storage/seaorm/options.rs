@@ -710,6 +710,7 @@ fn extract_service_options(
 // =============================================================================
 
 /// Look up cached entity options for a given file and message name
+#[allow(dead_code)]
 pub fn get_cached_entity_options(
     file_name: &str,
     msg_name: &str,

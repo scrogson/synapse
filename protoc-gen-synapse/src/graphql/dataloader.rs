@@ -7,57 +7,41 @@
 //! 1. ID Loaders (for BelongsTo): Load entities by their primary key
 //! 2. Relation Loaders (for HasMany): Load related entities by foreign key
 
-use crate::error::GeneratorError;
-use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_type_options,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{DescriptorProto, FileDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::{Entity, Relation, RelationType};
+use synapse_gen::{GeneratedFile, GeneratorError};
 
-/// Generate DataLoaders for a message type based on its relations
+/// Generate DataLoaders for an entity based on its relations
 pub fn generate(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-    all_files: &[FileDescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let msg_name = message.name.as_deref().unwrap_or("");
-
+    package_name: &str,
+    entity: &Entity,
+    all_entities: &[&Entity],
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
     // Check for graphql type options
-    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
+    let graphql_opts = entity.graphql.as_ref();
 
     // Skip if no graphql options or explicitly skipped
-    if msg_opts.as_ref().is_some_and(|o| o.skip) {
+    if graphql_opts.is_some_and(|o| o.skip) {
         return Ok(vec![]);
     }
 
-    // Get entity options to find relations
-    let entity_opts = get_cached_entity_options(file_name, msg_name);
-
-    // If no entity options or no relations, skip
-    if entity_opts.is_none() {
-        return Ok(vec![]);
-    }
-
-    let entity = entity_opts.unwrap();
+    // If no relations, skip
     if entity.relations.is_empty() {
         return Ok(vec![]);
     }
 
     // Determine type name
-    let type_name = msg_opts
-        .as_ref()
+    let type_name = graphql_opts
         .filter(|o| !o.name.is_empty())
         .map(|o| o.name.clone())
-        .unwrap_or_else(|| msg_name.to_upper_camel_case());
+        .unwrap_or_else(|| entity.name.to_upper_camel_case());
 
     let mut loaders = Vec::new();
 
     // Generate a loader for each relation
     for relation in &entity.relations {
-        if let Some(loader) = generate_relation_loader(file, &type_name, relation, all_files)? {
+        if let Some(loader) = generate_relation_loader(package_name, &type_name, relation, all_entities)? {
             loaders.push(loader);
         }
     }
@@ -69,21 +53,18 @@ pub fn generate(
 ///
 /// Uses the List RPC with an IN filter on the foreign key for true batch loading.
 fn generate_relation_loader(
-    file: &FileDescriptorProto,
+    package_name: &str,
     parent_type: &str,
-    relation: &crate::options::synapse::storage::RelationDef,
-    all_files: &[FileDescriptorProto],
-) -> Result<Option<File>, GeneratorError> {
+    relation: &Relation,
+    all_entities: &[&Entity],
+) -> Result<Option<GeneratedFile>, GeneratorError> {
     let related_type = &relation.related;
     let foreign_key = &relation.foreign_key;
 
-    let relation_type = relation.r#type();
-
     // Only generate for HasMany/ManyToMany relations
     let is_many = matches!(
-        relation_type,
-        crate::options::synapse::storage::RelationType::HasMany
-            | crate::options::synapse::storage::RelationType::ManyToMany
+        relation.relation_type,
+        RelationType::HasMany | RelationType::ManyToMany
     );
 
     if !is_many {
@@ -97,7 +78,7 @@ fn generate_relation_loader(
     }
 
     // Check if the FK field on the related entity is optional
-    let fk_is_optional = find_field_optionality(all_files, related_type, foreign_key);
+    let fk_is_optional = find_field_optionality(all_entities, related_type, foreign_key);
 
     // Generate loader name (e.g., PostsByUserLoader)
     let loader_name = format!(
@@ -238,17 +219,15 @@ fn generate_relation_loader(
     };
 
     // Determine output file path
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         loader_name.to_snake_case()
     );
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 
@@ -257,32 +236,22 @@ fn generate_relation_loader(
 /// Uses the List RPC with an IN filter for true batch loading (single query).
 /// It's used for BelongsTo relations (e.g., Post.author uses UserLoader).
 pub fn generate_entity_loader(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let msg_name = message.name.as_deref().unwrap_or("");
-
+    package_name: &str,
+    entity: &Entity,
+) -> Result<Option<GeneratedFile>, GeneratorError> {
     // Check for graphql type options
-    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
+    let graphql_opts = entity.graphql.as_ref();
 
     // Skip if no graphql options or explicitly skipped
-    if msg_opts.as_ref().is_some_and(|o| o.skip) {
-        return Ok(None);
-    }
-
-    // Get entity options - only generate loaders for entities
-    let entity_opts = get_cached_entity_options(file_name, msg_name);
-    if entity_opts.is_none() {
+    if graphql_opts.is_some_and(|o| o.skip) {
         return Ok(None);
     }
 
     // Determine type name
-    let type_name = msg_opts
-        .as_ref()
+    let type_name = graphql_opts
         .filter(|o| !o.name.is_empty())
         .map(|o| o.name.clone())
-        .unwrap_or_else(|| msg_name.to_upper_camel_case());
+        .unwrap_or_else(|| entity.name.to_upper_camel_case());
 
     let loader_name = format!("{}Loader", type_name);
     let loader_ident = format_ident!("{}", loader_name);
@@ -386,39 +355,34 @@ pub fn generate_entity_loader(
     };
 
     // Determine output file path
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}_loader.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         type_name.to_snake_case()
     );
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 
 /// Find if a field on a message is optional (proto3_optional)
 fn find_field_optionality(
-    all_files: &[FileDescriptorProto],
+    all_entities: &[&Entity],
     message_name: &str,
     field_name: &str,
 ) -> bool {
     let field_snake = field_name.to_snake_case();
     let message_camel = message_name.to_upper_camel_case();
 
-    for file in all_files {
-        for message in &file.message_type {
-            let msg_name = message.name.as_deref().unwrap_or("");
-            if msg_name.to_upper_camel_case() == message_camel {
-                // Found the message, now find the field
-                for field in &message.field {
-                    let name = field.name.as_deref().unwrap_or("");
-                    if name.to_snake_case() == field_snake {
-                        return field.proto3_optional.unwrap_or(false);
-                    }
+    for entity in all_entities {
+        if entity.name.to_upper_camel_case() == message_camel {
+            // Found the entity, now find the field in raw descriptor
+            for field in &entity.raw.field {
+                let name = field.name.as_deref().unwrap_or("");
+                if name.to_snake_case() == field_snake {
+                    return field.proto3_optional.unwrap_or(false);
                 }
             }
         }

@@ -3,39 +3,58 @@
 //! Generates async-graphql Object types from protobuf message definitions.
 //! Handles both output types (#[Object]) and input types (#[InputObject]).
 
-use crate::error::GeneratorError;
-use crate::options::synapse::storage::{RelationDef, RelationType};
-use crate::storage::seaorm::options::{
-    get_cached_entity_options, get_cached_graphql_field_options, get_cached_graphql_type_options,
-};
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
 use prost_types::field_descriptor_proto::Type;
-use prost_types::{DescriptorProto, FieldDescriptorProto, FileDescriptorProto};
+use prost_types::{DescriptorProto, FieldDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::GraphQLTypeOptions;
+use synapse_gen::ir::{Entity, Field, Message, Relation, RelationType};
+use synapse_gen::{GeneratedFile, GeneratorError};
 
-/// Generate a GraphQL Object type from a proto message
-pub fn generate(
-    file: &FileDescriptorProto,
-    message: &DescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let msg_name = message.name.as_deref().unwrap_or("");
-
-    // Note: Filter, OrderBy, Edge, Connection types defined in proto are processed here
-    // (they need GraphQL wrappers). filter.rs and connection.rs only auto-generate types
-    // that are NOT already defined in proto.
+/// Generate a GraphQL Object type from an entity (with relations)
+pub fn generate_for_entity(
+    package_name: &str,
+    entity: &Entity,
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
+    let message = entity.raw;
 
     // Check for graphql type options
-    let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
+    let Some(ref opts) = entity.graphql else {
+        return Ok(vec![]);
+    };
 
-    // Skip if no graphql options (only generate annotated messages)
-    if msg_opts.is_none() {
-        return Ok(None);
+    // Skip if explicitly marked
+    if opts.skip {
+        return Ok(vec![]);
     }
 
-    let opts = msg_opts.unwrap();
+    // Determine if this is an input type
+    if opts.input {
+        return match generate_input_type(package_name, message, opts)? {
+            Some(f) => Ok(vec![f]),
+            None => Ok(vec![]),
+        };
+    }
+
+    // Generate output object type
+    match generate_object_type(package_name, message, opts, &entity.relations, &entity.fields)? {
+        Some(f) => Ok(vec![f]),
+        None => Ok(vec![]),
+    }
+}
+
+/// Generate a GraphQL Object type from a non-entity message
+pub fn generate_for_message(
+    package_name: &str,
+    message: &Message,
+) -> Result<Option<GeneratedFile>, GeneratorError> {
+    let raw = message.raw;
+
+    // Check for graphql type options
+    let Some(ref opts) = message.graphql else {
+        return Ok(None);
+    };
 
     // Skip if explicitly marked
     if opts.skip {
@@ -44,20 +63,21 @@ pub fn generate(
 
     // Determine if this is an input type
     if opts.input {
-        return generate_input_type(file, message, &opts);
+        return generate_input_type(package_name, raw, opts);
     }
 
-    // Generate output object type
-    generate_object_type(file, message, &opts)
+    // Generate output object type (no relations for non-entity messages)
+    generate_object_type(package_name, raw, opts, &[], &message.fields)
 }
 
 /// Generate an async-graphql #[Object] type
 fn generate_object_type(
-    file: &FileDescriptorProto,
+    package_name: &str,
     message: &DescriptorProto,
-    opts: &crate::options::synapse::graphql::TypeOptions,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
+    opts: &GraphQLTypeOptions,
+    relations: &[Relation],
+    ir_fields: &[Field],
+) -> Result<Option<GeneratedFile>, GeneratorError> {
     let msg_name = message.name.as_deref().unwrap_or("");
 
     // Rust struct name (always derived from message name for consistency)
@@ -72,22 +92,20 @@ fn generate_object_type(
     };
 
     // Generate struct fields
-    let struct_fields = generate_struct_fields(file_name, msg_name, &message.field)?;
+    let struct_fields = generate_struct_fields(&message.field)?;
 
     // Generate resolver methods
-    let resolver_methods =
-        generate_resolver_methods(file_name, msg_name, &message.field, opts.node)?;
+    let resolver_methods = generate_resolver_methods(&message.field, ir_fields, opts.node)?;
 
     // Generate relation resolver methods from storage options
-    let entity_opts = get_cached_entity_options(file_name, msg_name);
-    let relation_resolvers = if let Some(ref entity) = entity_opts {
-        generate_relation_resolvers(&rust_name, &entity.relations, &message.field)?
+    let relation_resolvers = if !relations.is_empty() {
+        generate_relation_resolvers(&rust_name, relations, &message.field)?
     } else {
         quote! {}
     };
 
     // Generate From impl for proto conversion
-    let from_impl = generate_from_impl(file, message, &rust_name)?;
+    let from_impl = generate_from_impl(message, &rust_name)?;
 
     // Check if this implements Node interface
     let node_impl = if opts.node {
@@ -140,27 +158,24 @@ fn generate_object_type(
 
     // Determine output file path - use package, not file name
     // This ensures all GraphQL types for a package go to the same directory
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         rust_name.to_snake_case()
     );
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 
 /// Generate an async-graphql #[InputObject] type
 fn generate_input_type(
-    file: &FileDescriptorProto,
+    package_name: &str,
     message: &DescriptorProto,
-    opts: &crate::options::synapse::graphql::TypeOptions,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
+    opts: &GraphQLTypeOptions,
+) -> Result<Option<GeneratedFile>, GeneratorError> {
     let msg_name = message.name.as_deref().unwrap_or("");
 
     // Rust struct name (always derived from message name)
@@ -173,7 +188,7 @@ fn generate_input_type(
     let type_ident = format_ident!("{}", rust_name);
 
     // Generate struct fields for input type
-    let struct_fields = generate_input_fields(file_name, msg_name, &message.field)?;
+    let struct_fields = generate_input_fields(&message.field)?;
 
     // Collect types referenced by fields and import them from parent module
     let mut referenced_types = std::collections::HashSet::new();
@@ -236,17 +251,15 @@ fn generate_input_type(
 
     // Determine output file path - use package, not file name
     // This ensures all GraphQL types for a package go to the same directory
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         rust_name.to_snake_case()
     );
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 
@@ -255,8 +268,6 @@ fn generate_input_type(
 /// The skip option only affects resolver method generation, not struct fields.
 /// This allows relation resolvers to access FK fields that aren't exposed in GraphQL.
 fn generate_struct_fields(
-    _file_name: &str,
-    _msg_name: &str,
     fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     use prost_types::field_descriptor_proto::Label;
@@ -294,19 +305,16 @@ fn generate_struct_fields(
 
 /// Generate struct fields for an InputObject type
 fn generate_input_fields(
-    file_name: &str,
-    msg_name: &str,
     fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     // Same as struct fields for now
-    generate_struct_fields(file_name, msg_name, fields)
+    generate_struct_fields(fields)
 }
 
 /// Generate resolver methods for an Object type
 fn generate_resolver_methods(
-    file_name: &str,
-    msg_name: &str,
     fields: &[FieldDescriptorProto],
+    ir_fields: &[Field],
     is_node: bool,
 ) -> Result<TokenStream, GeneratorError> {
     let mut method_tokens = Vec::new();
@@ -315,11 +323,14 @@ fn generate_resolver_methods(
         let field_name = field.name.as_deref().unwrap_or("");
         let field_number = field.number.unwrap_or(0);
 
-        // Check for graphql field options
-        let field_opts = get_cached_graphql_field_options(file_name, msg_name, field_number);
+        // Check for graphql field options via IR fields
+        let field_opts = ir_fields
+            .iter()
+            .find(|f| f.number == field_number)
+            .and_then(|f| f.graphql.as_ref());
 
         // Skip if marked
-        if field_opts.as_ref().is_some_and(|o| o.skip) {
+        if field_opts.is_some_and(|o| o.skip) {
             continue;
         }
 
@@ -330,7 +341,6 @@ fn generate_resolver_methods(
 
         // Determine method name (use override if present)
         let method_name = field_opts
-            .as_ref()
             .filter(|o| !o.name.is_empty())
             .map(|o| o.name.clone())
             .unwrap_or_else(|| field_name.to_snake_case());
@@ -341,9 +351,9 @@ fn generate_resolver_methods(
         let is_optional = field.proto3_optional.unwrap_or(false);
 
         // Generate deprecation attribute if present
-        let deprecated_attr = if let Some(ref opts) = field_opts {
-            if let Some(ref dep) = opts.deprecated {
-                let reason = &dep.reason;
+        // In IR, deprecated is Option<String> directly (the string IS the reason)
+        let deprecated_attr = if let Some(opts) = field_opts {
+            if let Some(ref reason) = opts.deprecated {
                 quote! { #[graphql(deprecation = #reason)] }
             } else {
                 quote! {}
@@ -436,7 +446,6 @@ fn generate_node_methods(type_name: &str, id_field: Option<&FieldDescriptorProto
 /// Note: All fields are converted, including those marked with skip.
 /// This allows relation resolvers to access FK fields.
 fn generate_from_impl(
-    _file: &FileDescriptorProto,
     message: &DescriptorProto,
     type_name: &str,
 ) -> Result<TokenStream, GeneratorError> {
@@ -637,7 +646,7 @@ fn generate_field_resolver_body(field: &FieldDescriptorProto, is_optional: bool)
 /// Generate relation resolver methods from storage entity relations
 fn generate_relation_resolvers(
     parent_type: &str,
-    relations: &[RelationDef],
+    relations: &[Relation],
     fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     let mut resolvers = Vec::new();
@@ -653,7 +662,7 @@ fn generate_relation_resolvers(
 /// Generate a single relation resolver
 fn generate_single_relation_resolver(
     parent_type: &str,
-    relation: &RelationDef,
+    relation: &Relation,
     fields: &[FieldDescriptorProto],
 ) -> Result<TokenStream, GeneratorError> {
     let relation_name = &relation.name;
@@ -699,7 +708,7 @@ fn generate_single_relation_resolver(
         .map(|f| f.proto3_optional.unwrap_or(false))
         .unwrap_or(false);
 
-    let relation_type = relation.r#type();
+    let relation_type = &relation.relation_type;
 
     match relation_type {
         RelationType::ManyToMany => {
@@ -864,7 +873,6 @@ fn generate_single_relation_resolver(
                 })
             }
         }
-        _ => Ok(quote! {}),
     }
 }
 

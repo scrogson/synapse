@@ -6,12 +6,12 @@
 //! - Entity-specific order by types (UserOrderBy, PostOrderBy, etc.)
 //! - OrderDirection enum
 
-use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
-use prost_types::compiler::code_generator_response::File;
 use prost_types::field_descriptor_proto::Type;
-use prost_types::{DescriptorProto, FileDescriptorProto};
+use prost_types::DescriptorProto;
 use quote::{format_ident, quote};
+use synapse_gen::ir::Entity;
+use synapse_gen::{GeneratedFile, GeneratorContext, GeneratorError};
 
 // Type is used in generate_entity_filter for field type matching
 
@@ -20,35 +20,35 @@ use quote::{format_ident, quote};
 /// Always generates GraphQL wrapper types with From impls to convert to/from proto types.
 /// Proto types are needed for gRPC/prost, GraphQL wrappers are needed for async-graphql.
 pub fn generate_filters_for_package(
-    file: &FileDescriptorProto,
-    entities: &[&DescriptorProto],
-    all_files: &[FileDescriptorProto],
-) -> Result<Vec<File>, GeneratorError> {
+    ctx: &GeneratorContext,
+    entities: &[&Entity],
+) -> Result<Vec<GeneratedFile>, GeneratorError> {
+    let package_name = &ctx.package.name;
     let mut files = Vec::new();
 
     // Always generate ALL primitive filter types to synapse/relay/graphql/
     // This ensures consistency and avoids missing type errors
-    files.push(generate_int_filter(file)?);
-    files.push(generate_string_filter(file)?);
-    files.push(generate_bool_filter(file)?);
-    files.push(generate_float_filter(file)?);
-    files.push(generate_timestamp_filter(file)?);
+    files.push(generate_int_filter()?);
+    files.push(generate_string_filter()?);
+    files.push(generate_bool_filter()?);
+    files.push(generate_float_filter()?);
+    files.push(generate_timestamp_filter()?);
 
     // Always generate OrderDirection enum
-    files.push(generate_order_direction(file)?);
+    files.push(generate_order_direction()?);
 
     // Generate entity-specific filter and orderBy types (GraphQL wrappers)
     for entity in entities {
-        let entity_name = entity.name.as_deref().unwrap_or("");
-        files.push(generate_entity_filter(file, entity, entity_name, all_files)?);
-        files.push(generate_entity_order_by(file, entity, entity_name, all_files)?);
+        let entity_name = entity.raw.name.as_deref().unwrap_or("");
+        files.push(generate_entity_filter(package_name, entity.raw, entity_name, &ctx.package.raw_files)?);
+        files.push(generate_entity_order_by(package_name, entity.raw, entity_name, &ctx.package.raw_files)?);
     }
 
     Ok(files)
 }
 
 /// Generate IntFilter type (in shared synapse/relay/graphql location)
-fn generate_int_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_int_filter() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated IntFilter type
         //! @generated
@@ -105,15 +105,14 @@ fn generate_int_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorErr
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/int_filter.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate StringFilter type (in shared synapse/relay/graphql location)
-fn generate_string_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_string_filter() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated StringFilter type
         //! @generated
@@ -185,15 +184,14 @@ fn generate_string_filter(_file: &FileDescriptorProto) -> Result<File, Generator
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/string_filter.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate BoolFilter type (in shared synapse/relay/graphql location)
-fn generate_bool_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_bool_filter() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated BoolFilter type
         //! @generated
@@ -231,15 +229,14 @@ fn generate_bool_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorEr
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/bool_filter.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate FloatFilter type (in shared synapse/relay/graphql location)
-fn generate_float_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_float_filter() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated FloatFilter type
         //! @generated
@@ -275,15 +272,14 @@ fn generate_float_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorE
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/float_filter.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate TimestampFilter type (in shared synapse/relay/graphql location)
-fn generate_timestamp_filter(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_timestamp_filter() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated TimestampFilter type
         //! @generated
@@ -336,15 +332,14 @@ fn generate_timestamp_filter(_file: &FileDescriptorProto) -> Result<File, Genera
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/timestamp_filter.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
 /// Generate OrderDirection enum (in shared synapse/relay/graphql location)
-fn generate_order_direction(_file: &FileDescriptorProto) -> Result<File, GeneratorError> {
+fn generate_order_direction() -> Result<GeneratedFile, GeneratorError> {
     let code = quote! {
         //! Auto-generated OrderDirection enum
         //! @generated
@@ -392,10 +387,9 @@ fn generate_order_direction(_file: &FileDescriptorProto) -> Result<File, Generat
     // Output to shared location: synapse/relay/graphql/
     let output_path = "synapse/relay/graphql/order_direction.rs".to_string();
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
@@ -403,11 +397,11 @@ fn generate_order_direction(_file: &FileDescriptorProto) -> Result<File, Generat
 ///
 /// If proto defines a Filter type, uses its fields. Otherwise uses entity fields.
 fn generate_entity_filter(
-    file: &FileDescriptorProto,
+    package_name: &str,
     entity: &DescriptorProto,
     entity_name: &str,
-    all_files: &[FileDescriptorProto],
-) -> Result<File, GeneratorError> {
+    all_files: &[&prost_types::FileDescriptorProto],
+) -> Result<GeneratedFile, GeneratorError> {
     let filter_name = format!("{}Filter", entity_name.to_upper_camel_case());
     let filter_ident = format_ident!("{}", filter_name);
 
@@ -560,17 +554,15 @@ fn generate_entity_filter(
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}_filter.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         entity_name.to_snake_case()
     );
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }
 
@@ -578,11 +570,11 @@ fn generate_entity_filter(
 ///
 /// If proto defines an OrderBy type, uses its fields. Otherwise uses entity fields.
 fn generate_entity_order_by(
-    file: &FileDescriptorProto,
+    package_name: &str,
     entity: &DescriptorProto,
     entity_name: &str,
-    all_files: &[FileDescriptorProto],
-) -> Result<File, GeneratorError> {
+    all_files: &[&prost_types::FileDescriptorProto],
+) -> Result<GeneratedFile, GeneratorError> {
     let order_by_name = format!("{}OrderBy", entity_name.to_upper_camel_case());
     let order_by_ident = format_ident!("{}", order_by_name);
 
@@ -667,16 +659,14 @@ fn generate_entity_order_by(
         Err(_) => content,
     };
 
-    let package = file.package.as_deref().unwrap_or("");
     let output_path = format!(
         "{}/graphql/{}_order_by.rs",
-        package.replace('.', "/"),
+        package_name.replace('.', "/"),
         entity_name.to_snake_case()
     );
 
-    Ok(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(GeneratedFile {
+        path: output_path,
+        content: formatted,
     })
 }

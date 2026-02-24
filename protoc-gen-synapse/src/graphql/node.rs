@@ -3,32 +3,28 @@
 //! Generates the Node interface for types marked with `node: true`.
 //! Provides global ID encoding/decoding using base62 for URL-safe IDs.
 
-use crate::error::GeneratorError;
-use crate::storage::seaorm::options::get_cached_graphql_type_options;
 use heck::ToUpperCamelCase;
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{DescriptorProto, FileDescriptorProto};
+use prost_types::DescriptorProto;
 use quote::{format_ident, quote};
+use synapse_gen::ir::Entity;
+use synapse_gen::{GeneratedFile, GeneratorError};
 
-/// Collect all node types from a file descriptor
-pub fn collect_node_types(
-    file: &FileDescriptorProto,
-) -> Vec<(&DescriptorProto, String)> {
-    let file_name = file.name.as_deref().unwrap_or("");
+/// Collect all node types from entities
+pub fn collect_node_types<'a>(
+    entities: &[&'a Entity<'a>],
+) -> Vec<(&'a DescriptorProto, String)> {
     let mut node_types = Vec::new();
 
-    for message in &file.message_type {
-        let msg_name = message.name.as_deref().unwrap_or("");
-        let msg_opts = get_cached_graphql_type_options(file_name, msg_name);
+    for entity in entities {
+        let graphql_opts = entity.graphql.as_ref();
 
-        if msg_opts.as_ref().is_some_and(|o| o.node && !o.skip) {
-            let type_name = msg_opts
-                .as_ref()
+        if graphql_opts.is_some_and(|o| o.node && !o.skip) {
+            let type_name = graphql_opts
                 .filter(|o| !o.name.is_empty())
                 .map(|o| o.name.clone())
-                .unwrap_or_else(|| msg_name.to_upper_camel_case());
-            node_types.push((message, type_name));
+                .unwrap_or_else(|| entity.name.to_upper_camel_case());
+            node_types.push((entity.raw, type_name));
         }
     }
 
@@ -37,9 +33,9 @@ pub fn collect_node_types(
 
 /// Generate the Node interface enum and node query
 pub fn generate_node_interface(
-    file: &FileDescriptorProto,
+    package_name: &str,
     node_types: &[(&DescriptorProto, String)],
-) -> Result<Option<File>, GeneratorError> {
+) -> Result<Option<GeneratedFile>, GeneratorError> {
     if node_types.is_empty() {
         return Ok(None);
     }
@@ -116,13 +112,11 @@ pub fn generate_node_interface(
     };
 
     // Determine output file path
-    let package = file.package.as_deref().unwrap_or("");
-    let output_path = format!("{}/graphql/node.rs", package.replace('.', "/"));
+    let output_path = format!("{}/graphql/node.rs", package_name.replace('.', "/"));
 
-    Ok(Some(File {
-        name: Some(output_path),
-        content: Some(formatted),
-        ..Default::default()
+    Ok(Some(GeneratedFile {
+        path: output_path,
+        content: formatted,
     }))
 }
 
