@@ -8,7 +8,8 @@ use crate::storage::seaorm::package::PackageGenerator;
 use crate::storage::seaorm::entity::EntityGenerator;
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
-use crate::{graphql, typescript};
+use crate::graphql;
+use crate::typescript::TypeScriptGenerator;
 use crate::validate::ValidateGenerator;
 use crate::grpc::GrpcGenerator;
 use crate::storage::seaorm::enum_gen::EnumGenerator;
@@ -119,20 +120,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             }
         }
 
-        // Generate TypeScript type definitions
-        if let Some(generated) = typescript::generate_types(file_descriptor, &request.proto_file)? {
-            files.push(generated);
-        }
-
-        // Generate TypeScript resolver contracts
-        if let Some(generated) = typescript::generate_resolvers(file_descriptor, &request.proto_file)? {
-            files.push(generated);
-        }
-
-        // Generate TypeScript DataLoader interfaces
-        if let Some(generated) = typescript::generate_dataloaders(file_descriptor, &request.proto_file)? {
-            files.push(generated);
-        }
     }
 
     Ok(CodeGeneratorResponse {
@@ -270,6 +257,20 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
         };
         new_gen_files.extend(
             package_gen
+                .finalize_package(&ctx)
+                .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+        );
+    }
+
+    // Run TypeScript generator via synapse-gen IR
+    let ts_gen = TypeScriptGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        new_gen_files.extend(
+            ts_gen
                 .finalize_package(&ctx)
                 .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
         );
