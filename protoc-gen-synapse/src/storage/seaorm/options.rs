@@ -779,6 +779,7 @@ pub fn get_cached_service_options(
 }
 
 /// Parse storage service options from a ServiceDescriptorProto
+#[allow(dead_code)]
 pub fn parse_service_options(service: &ServiceDescriptorProto) -> Option<storage::ServiceOptions> {
     let opts = service.options.as_ref()?;
 
@@ -787,6 +788,7 @@ pub fn parse_service_options(service: &ServiceDescriptorProto) -> Option<storage
 }
 
 /// Look up cached method options for a given file, service name, and method name
+#[allow(dead_code)]
 pub fn get_cached_rpc_method_options(
     file_name: &str,
     service_name: &str,

@@ -3,13 +3,15 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{entity, implementation, options, package};
+use super::{entity, options, package};
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
 use crate::{graphql, typescript};
 use crate::validate::ValidateGenerator;
 use crate::grpc::GrpcGenerator;
 use crate::storage::seaorm::enum_gen::EnumGenerator;
+use crate::storage::{StorageDefaultsGenerator, StorageTraitGenerator};
+use crate::storage::seaorm::implementation::StorageImplGenerator;
 use synapse_gen::{CodeGenerator, GeneratorContext, ParsedSchema};
 use prost::Message;
 use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
@@ -109,18 +111,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 
         // Process each service in the file
         for svc in &file_descriptor.service {
-            // Storage defaults generation (standalone functions for partial overrides)
-            if let Some(generated) = crate::storage::generate_defaults(file_descriptor, svc, &request.proto_file)? {
-                files.push(generated);
-            }
-            // Storage trait generation (with default impls that call defaults)
-            if let Some(generated) = crate::storage::generate(file_descriptor, svc)? {
-                files.push(generated);
-            }
-            // Storage implementation generation (minimal SeaORM-based impl)
-            if let Some(generated) = implementation::generate(file_descriptor, svc, &request.proto_file)? {
-                files.push(generated);
-            }
             // GraphQL resolver generation (Query/Mutation structs)
             for generated in graphql::generate_service(file_descriptor, svc)? {
                 files.push(generated);
@@ -162,7 +152,7 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
 /// Generate SeaORM entities from raw protobuf bytes
 ///
 /// This entry point preserves extension data by using prost-reflect for decoding.
-/// It runs both the new synapse-gen-based generators (validate, enum, grpc) and the legacy
+/// It runs both the new synapse-gen-based generators (validate, enum, grpc, storage) and the legacy
 /// generators (entity, graphql, etc.) and merges their outputs.
 pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, GeneratorError> {
     // Parse with synapse-gen for new generators (validate, enum, grpc)
@@ -228,6 +218,34 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
         for service in &package.services {
             new_gen_files.extend(
                 grpc_gen
+                    .generate_service(&ctx, service)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+        }
+    }
+
+    // Run storage generators via synapse-gen IR
+    let trait_gen = StorageTraitGenerator;
+    let defaults_gen = StorageDefaultsGenerator;
+    let impl_gen = StorageImplGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        for service in &package.services {
+            new_gen_files.extend(
+                trait_gen
+                    .generate_service(&ctx, service)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+            new_gen_files.extend(
+                defaults_gen
+                    .generate_service(&ctx, service)
+                    .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+            );
+            new_gen_files.extend(
+                impl_gen
                     .generate_service(&ctx, service)
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );

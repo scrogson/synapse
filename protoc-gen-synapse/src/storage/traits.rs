@@ -9,204 +9,191 @@
 //! - Each operation has a default implementation that calls `defaults::*`
 //! - Users can override specific methods while using defaults for others
 
-use super::seaorm::options::{
-    get_cached_rpc_method_options, get_cached_service_options, get_cached_validate_message_options,
-    parse_service_options,
-};
-use crate::error::GeneratorError;
 use heck::{ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::TokenStream;
-use prost_types::compiler::code_generator_response::File;
-use prost_types::{FileDescriptorProto, MethodDescriptorProto, ServiceDescriptorProto};
 use quote::{format_ident, quote};
+use synapse_gen::ir::options::ValidateMessageOptions;
+use synapse_gen::ir::Service;
+use synapse_gen::{CodeGenerator, GeneratedFile, GeneratorContext, GeneratorError};
 
-/// Generate a Storage trait from a protobuf service
-pub fn generate(
-    file: &FileDescriptorProto,
-    service: &ServiceDescriptorProto,
-) -> Result<Option<File>, GeneratorError> {
-    let file_name = file.name.as_deref().unwrap_or("");
-    let service_name = service.name.as_deref().unwrap_or("");
+/// Generator that produces backend-agnostic Storage traits.
+pub struct StorageTraitGenerator;
 
-    // Check if this service has storage options
-    let service_options = match get_cached_service_options(file_name, service_name) {
-        Some(opts) => opts,
-        None => match parse_service_options(service) {
-            Some(opts) => opts,
-            None => return Ok(None), // No storage options, skip this service
-        },
-    };
-
-    // Skip if explicitly marked or if generate_storage is false
-    if service_options.skip || !service_options.generate_storage {
-        return Ok(None);
+impl CodeGenerator for StorageTraitGenerator {
+    fn name(&self) -> &str {
+        "storage_trait"
     }
 
-    // Determine trait name
-    let trait_name = if service_options.trait_name.is_empty() {
-        format!("{}Storage", service_name)
-    } else {
-        service_options.trait_name.clone()
-    };
+    fn generate_service(
+        &self,
+        ctx: &GeneratorContext,
+        service: &Service,
+    ) -> Result<Vec<GeneratedFile>, GeneratorError> {
+        let storage_options = match &service.storage {
+            Some(opts) if !opts.skip && opts.generate_storage => opts,
+            _ => return Ok(vec![]),
+        };
 
-    // Check if we should generate default implementations
-    let generate_defaults = service_options.generate_implementation;
+        let service_name = &service.name;
 
-    // Generate the output filename (in storage/ subdirectory)
-    let module_name = trait_name.to_snake_case();
-    let output_filename = format!(
-        "{}/storage/{}.rs",
-        file.package.as_deref().unwrap_or("").replace('.', "/"),
-        module_name
-    );
+        // Determine trait name
+        let trait_name = if storage_options.trait_name.is_empty() {
+            format!("{}Storage", service_name)
+        } else {
+            storage_options.trait_name.clone()
+        };
 
-    // Generate trait methods (with or without default implementations)
-    let methods = generate_trait_methods(file_name, service_name, &service.method, generate_defaults, &module_name)?;
+        // Check if we should generate default implementations
+        let generate_defaults = storage_options.generate_implementation;
 
-    // Build the trait
-    let trait_ident = format_ident!("{}", trait_name);
+        // Generate the output filename (in storage/ subdirectory)
+        let module_name = trait_name.to_snake_case();
+        let output_filename = format!(
+            "{}/storage/{}.rs",
+            ctx.package.name.replace('.', "/"),
+            module_name
+        );
 
-    // Build doc comment (quote! doesn't interpolate in doc comments)
-    let module_doc = format!("Storage trait for {}", service_name);
-    let trait_doc = format!(
-        "Storage trait mirroring {} RPCs.\n\n\
-        Implement the required `db()` method and optionally override any operations.\n\
-        All operations have default implementations that delegate to the `defaults` module.",
-        service_name
-    );
+        // Generate trait methods (with or without default implementations)
+        let methods = generate_trait_methods(ctx, service, generate_defaults, &module_name)?;
 
-    // Import the defaults module if we're generating default implementations
-    let defaults_import = if generate_defaults {
-        let defaults_module = format_ident!("{}_defaults", module_name);
-        quote! {
-            use super::#defaults_module as defaults;
-        }
-    } else {
-        quote! {}
-    };
+        // Build the trait
+        let trait_ident = format_ident!("{}", trait_name);
 
-    // The db() method - required for all implementations
-    let db_method = if generate_defaults {
-        quote! {
-            /// Get a reference to the database connection.
-            ///
-            /// This is required for default implementations to work.
-            fn db(&self) -> &sea_orm::DatabaseConnection;
-        }
-    } else {
-        quote! {}
-    };
+        // Build doc comments
+        let module_doc = format!("Storage trait for {}", service_name);
+        let trait_doc = format!(
+            "Storage trait mirroring {} RPCs.\n\n\
+            Implement the required `db()` method and optionally override any operations.\n\
+            All operations have default implementations that delegate to the `defaults` module.",
+            service_name
+        );
 
-    let code = quote! {
-        #![doc = #module_doc]
-        //!
-        //! Generated by protoc-gen-synapse from protobuf service definition.
-        //!
-        //! This trait supports partial overrides - you can override specific methods
-        //! while using default implementations for others. Just implement the required
-        //! `db()` method and override the operations you need custom logic for.
-        //!
-        //! # Example
-        //!
-        //! ```rust,ignore
-        //! struct MyStorage { db: DatabaseConnection }
-        //!
-        //! impl UserServiceStorage for MyStorage {
-        //!     fn db(&self) -> &DatabaseConnection { &self.db }
-        //!
-        //!     // Override just create_user with custom business logic
-        //!     async fn create_user(&self, request: CreateUserRequest) -> Result<CreateUserResponse, StorageError> {
-        //!         // Custom validation
-        //!         if request.email.is_empty() {
-        //!             return Err(StorageError::InvalidArgument("email required".into()));
-        //!         }
-        //!
-        //!         // Call default implementation
-        //!         defaults::create_user(self.db(), request).await
-        //!     }
-        //!
-        //!     // All other methods use trait defaults
-        //! }
-        //! ```
-        //!
-        //! @generated
+        // Import the defaults module if we're generating default implementations
+        let defaults_import = if generate_defaults {
+            let defaults_module = format_ident!("{}_defaults", module_name);
+            quote! {
+                use super::#defaults_module as defaults;
+            }
+        } else {
+            quote! {}
+        };
 
-        #![allow(missing_docs)]
-        #![allow(unused_imports)]
+        // The db() method - required for all implementations
+        let db_method = if generate_defaults {
+            quote! {
+                /// Get a reference to the database connection.
+                ///
+                /// This is required for default implementations to work.
+                fn db(&self) -> &sea_orm::DatabaseConnection;
+            }
+        } else {
+            quote! {}
+        };
 
-        use super::super::prelude::*;
-        #defaults_import
+        let code = quote! {
+            #![doc = #module_doc]
+            //!
+            //! Generated by protoc-gen-synapse from protobuf service definition.
+            //!
+            //! This trait supports partial overrides - you can override specific methods
+            //! while using default implementations for others. Just implement the required
+            //! `db()` method and override the operations you need custom logic for.
+            //!
+            //! # Example
+            //!
+            //! ```rust,ignore
+            //! struct MyStorage { db: DatabaseConnection }
+            //!
+            //! impl UserServiceStorage for MyStorage {
+            //!     fn db(&self) -> &DatabaseConnection { &self.db }
+            //!
+            //!     // Override just create_user with custom business logic
+            //!     async fn create_user(&self, request: CreateUserRequest) -> Result<CreateUserResponse, StorageError> {
+            //!         // Custom validation
+            //!         if request.email.is_empty() {
+            //!             return Err(StorageError::InvalidArgument("email required".into()));
+            //!         }
+            //!
+            //!         // Call default implementation
+            //!         defaults::create_user(self.db(), request).await
+            //!     }
+            //!
+            //!     // All other methods use trait defaults
+            //! }
+            //! ```
+            //!
+            //! @generated
 
-        /// Storage error type
-        #[derive(Debug, thiserror::Error)]
-        pub enum StorageError {
-            /// Database error
-            #[error("database error: {0}")]
-            Database(#[from] sea_orm::DbErr),
-            /// Resource not found
-            #[error("not found: {0}")]
-            NotFound(String),
-            /// Invalid argument
-            #[error("invalid argument: {0}")]
-            InvalidArgument(String),
-        }
+            #![allow(missing_docs)]
+            #![allow(unused_imports)]
 
-        #[doc = #trait_doc]
-        #[async_trait::async_trait]
-        pub trait #trait_ident: Send + Sync {
-            #db_method
-            #(#methods)*
-        }
-    };
+            use super::super::prelude::*;
+            #defaults_import
 
-    // Format the generated code
-    let content = code.to_string();
+            /// Storage error type
+            #[derive(Debug, thiserror::Error)]
+            pub enum StorageError {
+                /// Database error
+                #[error("database error: {0}")]
+                Database(#[from] sea_orm::DbErr),
+                /// Resource not found
+                #[error("not found: {0}")]
+                NotFound(String),
+                /// Invalid argument
+                #[error("invalid argument: {0}")]
+                InvalidArgument(String),
+            }
 
-    // Try to format with prettyplease if we can parse it
-    let formatted = match syn::parse_file(&content) {
-        Ok(parsed) => prettyplease::unparse(&parsed),
-        Err(_) => content, // If parsing fails, use unformatted
-    };
+            #[doc = #trait_doc]
+            #[async_trait::async_trait]
+            pub trait #trait_ident: Send + Sync {
+                #db_method
+                #(#methods)*
+            }
+        };
 
-    Ok(Some(File {
-        name: Some(output_filename),
-        content: Some(formatted),
-        ..Default::default()
-    }))
+        // Format the generated code
+        let content = code.to_string();
+        let formatted = match syn::parse_file(&content) {
+            Ok(parsed) => prettyplease::unparse(&parsed),
+            Err(_) => content,
+        };
+
+        Ok(vec![GeneratedFile {
+            path: output_filename,
+            content: formatted,
+        }])
+    }
 }
 
 /// Generate trait method signatures from service methods
 fn generate_trait_methods(
-    file_name: &str,
-    service_name: &str,
-    methods: &[MethodDescriptorProto],
+    ctx: &GeneratorContext,
+    service: &Service,
     generate_defaults: bool,
     _module_name: &str,
 ) -> Result<Vec<TokenStream>, GeneratorError> {
     let mut result = Vec::new();
 
-    for method in methods {
-        let method_name = method.name.as_deref().unwrap_or("");
-
-        // Check for method-level options
-        let method_options = get_cached_rpc_method_options(file_name, service_name, method_name);
+    for method in &service.methods {
+        let storage_opts = method.storage.as_ref();
 
         // Skip if marked
-        if method_options.as_ref().map(|o| o.skip).unwrap_or(false) {
+        if storage_opts.is_some_and(|o| o.skip) {
             continue;
         }
 
         // Determine Rust method name
-        let rust_method_name = method_options
-            .as_ref()
+        let rust_method_name = storage_opts
             .filter(|o| !o.method_name.is_empty())
             .map(|o| o.method_name.clone())
-            .unwrap_or_else(|| method_name.to_snake_case());
+            .unwrap_or_else(|| method.name.to_snake_case());
 
         // Extract input/output types - check for domain type first
-        let raw_input_type = extract_type_name(method.input_type.as_deref());
-        let input_type = resolve_domain_type(file_name, &raw_input_type);
-        let output_type = extract_type_name(method.output_type.as_deref());
+        let raw_input_type = extract_type_name(&method.input_type);
+        let input_type = resolve_domain_type(ctx, &raw_input_type);
+        let output_type = extract_type_name(&method.output_type);
 
         let method_ident = format_ident!("{}", rust_method_name);
         let input_ident = format_ident!("{}", input_type);
@@ -233,35 +220,39 @@ fn generate_trait_methods(
 }
 
 /// Resolve a message type to its domain type if one exists
-///
-/// If the message has synapse.validate.message options with generate_conversion=true
-/// and a non-empty name, that name is used as the domain type. Otherwise, the
-/// original message name is returned.
-fn resolve_domain_type(file_name: &str, message_name: &str) -> String {
-    if let Some(opts) = get_cached_validate_message_options(file_name, message_name) {
-        if opts.generate_conversion && !opts.name.is_empty() {
-            return opts.name.clone();
-        }
-    }
-    message_name.to_string()
+fn resolve_domain_type(ctx: &GeneratorContext, message_name: &str) -> String {
+    find_validate_options(ctx, message_name)
+        .filter(|opts| opts.generate_conversion && !opts.name.is_empty())
+        .map(|opts| opts.name.clone())
+        .unwrap_or_else(|| message_name.to_string())
+}
+
+/// Find ValidateMessageOptions for a message by type name in the current package.
+fn find_validate_options<'a>(
+    ctx: &'a GeneratorContext,
+    type_name: &str,
+) -> Option<&'a ValidateMessageOptions> {
+    ctx.package
+        .messages
+        .iter()
+        .find(|m| m.name == type_name)
+        .and_then(|m| m.validate.as_ref())
+        .or_else(|| {
+            ctx.package
+                .entities
+                .iter()
+                .find(|e| e.name == type_name)
+                .and_then(|e| e.validate.as_ref())
+        })
 }
 
 /// Extract a Rust type name from a protobuf type path
-///
-/// Converts ".package.name.TypeName" to "TypeName"
-fn extract_type_name(type_name: Option<&str>) -> String {
-    match type_name {
-        Some(name) => {
-            // Protobuf type names are like ".package.name.TypeName"
-            // Extract just the type name (last segment)
-            let type_part = name
-                .rsplit('.')
-                .next()
-                .unwrap_or(name)
-                .trim_start_matches('.');
+fn extract_type_name(type_name: &str) -> String {
+    let type_part = type_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(type_name)
+        .trim_start_matches('.');
 
-            type_part.to_upper_camel_case()
-        }
-        None => "()".to_string(),
-    }
+    type_part.to_upper_camel_case()
 }
