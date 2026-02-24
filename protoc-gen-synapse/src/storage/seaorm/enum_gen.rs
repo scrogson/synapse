@@ -82,7 +82,7 @@ fn generate_enum_tokens(
         }
 
         // Determine variant name (strip enum prefix and convert to PascalCase)
-        let variant_name = convert_enum_variant_name(&variant.name, rust_enum_name);
+        let variant_name = convert_enum_variant_name(&variant.name, &prefix);
         let variant_ident = format_ident!("{}", variant_name);
 
         // Generate value attribute based on storage_type
@@ -159,16 +159,10 @@ fn generate_enum_tokens(
 
 /// Convert a protobuf enum value name to a Rust variant name
 ///
-/// Protobuf convention is SCREAMING_SNAKE_CASE with enum name prefix (e.g., USER_STATUS_ACTIVE)
-/// Rust convention is PascalCase without prefix (e.g., Active)
-fn convert_enum_variant_name(name: &str, enum_name: &str) -> String {
-    // Build the expected prefix from enum name: "UserStatus" -> "USER_STATUS_"
-    let prefix = format!("{}_", enum_name.to_shouty_snake_case());
-
-    // Strip the prefix if present
-    let stripped = name.strip_prefix(&prefix).unwrap_or(name);
-
-    // Convert remaining SCREAMING_SNAKE_CASE to PascalCase
+/// Strips the given prefix (e.g., "USER_STATUS_") and converts the remainder
+/// from SCREAMING_SNAKE_CASE to PascalCase (e.g., "ACTIVE" -> "Active").
+fn convert_enum_variant_name(name: &str, prefix: &str) -> String {
+    let stripped = name.strip_prefix(prefix).unwrap_or(name);
     stripped.to_upper_camel_case()
 }
 
@@ -247,18 +241,18 @@ mod tests {
     fn test_convert_enum_variant_name() {
         // With matching prefix - should strip it
         assert_eq!(
-            convert_enum_variant_name("USER_STATUS_ACTIVE", "UserStatus"),
+            convert_enum_variant_name("USER_STATUS_ACTIVE", "USER_STATUS_"),
             "Active"
         );
         assert_eq!(
-            convert_enum_variant_name("USER_STATUS_UNSPECIFIED", "UserStatus"),
+            convert_enum_variant_name("USER_STATUS_UNSPECIFIED", "USER_STATUS_"),
             "Unspecified"
         );
 
         // Without matching prefix - should keep as-is and convert
-        assert_eq!(convert_enum_variant_name("UNKNOWN", "Status"), "Unknown");
+        assert_eq!(convert_enum_variant_name("UNKNOWN", "STATUS_"), "Unknown");
         assert_eq!(
-            convert_enum_variant_name("MY_LONG_VALUE_NAME", "Other"),
+            convert_enum_variant_name("MY_LONG_VALUE_NAME", "OTHER_"),
             "MyLongValueName"
         );
     }
