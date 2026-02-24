@@ -3,7 +3,8 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::{options, package};
+use super::options;
+use crate::storage::seaorm::package::PackageGenerator;
 use crate::storage::seaorm::entity::EntityGenerator;
 use crate::error::GeneratorError;
 use crate::storage::seaorm::options::get_cached_entity_options;
@@ -116,11 +117,6 @@ pub fn generate(request: CodeGeneratorRequest) -> Result<CodeGeneratorResponse, 
             for generated in graphql::generate_inputs(file_descriptor, svc)? {
                 files.push(generated);
             }
-        }
-
-        // Generate package mod.rs and subdirectory mod.rs files
-        for generated in package::generate_all(file_descriptor, &request.proto_file)? {
-            files.push(generated);
         }
 
         // Generate TypeScript type definitions
@@ -263,6 +259,20 @@ pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, Genera
                     .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
             );
         }
+    }
+
+    // Run package generator via synapse-gen IR
+    let package_gen = PackageGenerator;
+    for package in &schema.packages {
+        let ctx = GeneratorContext {
+            schema: &schema,
+            package,
+        };
+        new_gen_files.extend(
+            package_gen
+                .finalize_package(&ctx)
+                .map_err(|e| GeneratorError::CodeGenError(e.to_string()))?,
+        );
     }
 
     // Run legacy generators

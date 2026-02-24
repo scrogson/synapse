@@ -767,6 +767,7 @@ pub fn get_cached_enum_value_options(
 }
 
 /// Look up cached service options for a given file and service name
+#[allow(dead_code)]
 pub fn get_cached_service_options(
     file_name: &str,
     service_name: &str,
@@ -841,6 +842,7 @@ pub fn get_cached_grpc_method_options(
 }
 
 /// Look up cached validate message options for a given file and message name
+#[allow(dead_code)]
 pub fn get_cached_validate_message_options(
     file_name: &str,
     msg_name: &str,
