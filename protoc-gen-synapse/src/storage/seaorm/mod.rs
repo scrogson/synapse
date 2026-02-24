@@ -8,7 +8,6 @@ mod enum_gen;
 pub mod generator;
 pub mod implementation;
 mod oneof;
-pub mod options;
 pub mod package;
 mod relation;
 mod types;

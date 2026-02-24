@@ -3,7 +3,6 @@
 //! This module coordinates the overall code generation process,
 //! iterating through proto files and generating SeaORM entities, enums, and storage traits.
 
-use super::options;
 use crate::graphql::GraphQLGenerator;
 use crate::storage::seaorm::package::PackageGenerator;
 use crate::storage::seaorm::entity::EntityGenerator;
@@ -19,15 +18,10 @@ use prost_types::compiler::CodeGeneratorResponse;
 
 /// Generate SeaORM entities from raw protobuf bytes
 ///
-/// This entry point preserves extension data by using prost-reflect for decoding.
-/// It runs all generators via synapse-gen IR types.
+/// Parses protobuf bytes with synapse-gen and runs all generators via IR types.
 pub fn generate_from_bytes(bytes: &[u8]) -> Result<CodeGeneratorResponse, GeneratorError> {
-    // Parse with synapse-gen for all generators
     let parsed = ParsedSchema::parse(bytes)
         .map_err(|e| GeneratorError::DecodeError(e.to_string()))?;
-
-    // Pre-process bytes to extract extension data (kept for safety during transition)
-    options::preprocess_request_bytes(bytes).map_err(GeneratorError::DecodeError)?;
 
     // Run all generators via synapse-gen IR
     let schema = parsed.schema();

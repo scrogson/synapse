@@ -17,7 +17,6 @@ use prost_types::compiler::{CodeGeneratorRequest, CodeGeneratorResponse};
 mod error;
 mod graphql;
 mod grpc;
-pub mod options;
 mod storage;
 mod typescript;
 mod validate;

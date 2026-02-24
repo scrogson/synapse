@@ -1188,29 +1188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37587d5a8a1b3dc9863403d084fc2254b91ab75a702207098837950767e2260b"
 dependencies = [
  "prost",
- "prost-reflect-derive",
  "prost-types",
-]
-
-[[package]]
-name = "prost-reflect-build"
-version = "0.15.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad8db7191445b1dbee19df4f6b6294e5123aef52620b344a630bb845d302622a"
-dependencies = [
- "prost-build",
- "prost-reflect",
-]
-
-[[package]]
-name = "prost-reflect-derive"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab076798900edeaf1499ed1c30097db86e6697c5d02660a63d72fe4ebdcfefd2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -1227,13 +1205,9 @@ name = "protoc-gen-synapse"
 version = "0.1.0"
 dependencies = [
  "heck",
- "once_cell",
  "prettyplease",
  "proc-macro2",
  "prost",
- "prost-build",
- "prost-reflect",
- "prost-reflect-build",
  "prost-types",
  "quote",
  "syn",
